@@ -33,11 +33,65 @@ from system_guilds import (
 )
 from store import ArenaStore
 from mastery import apply_mastery, mastery_public, system_mastery_xp
+from season import ensure_season, season_public
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
 THINK_MIN = 1.2
 THINK_MAX = 4.8
+_last_season_id: int | None = None
+
+
+def current_season() -> dict:
+    """Ensure active season; reset in-memory house ELO if a rollover just happened."""
+    global _last_season_id
+    row = ensure_season(store)
+    sid = row["id"]
+    if _last_season_id is not None and sid != _last_season_id:
+        for g in guilds.values():
+            if g.get("is_faction"):
+                g["elo"] = 1000
+                g["wins"] = 0
+                g["losses"] = 0
+    _last_season_id = sid
+    return row
+
+
+def leaderboard_payload() -> dict:
+    season = current_season()
+    sid = season["id"]
+    history = []
+    for h in store.season_history(5):
+        fac = FACTIONS.get(h.get("champion_faction") or "", {})
+        history.append({
+            "id": h["id"],
+            "name": h["name"],
+            "championFaction": h.get("champion_faction"),
+            "championHouse": fac.get("house"),
+            "championCrest": fac.get("crest", ""),
+            "championElo": h.get("champion_elo"),
+            "endedAt": h["ends_at"],
+        })
+    players = []
+    for i, row in enumerate(store.season_player_board(sid, 10)):
+        fac = FACTIONS.get(row.get("faction_id") or "", {})
+        players.append({
+            "rank": i + 1,
+            "nickname": row["nickname"],
+            "factionId": row.get("faction_id"),
+            "house": fac.get("house"),
+            "crest": fac.get("crest", ""),
+            "warsWon": row["wars_won"],
+            "warsLost": row["wars_lost"],
+            "duelsWon": row["duels_won"],
+            "duelsLost": row["duels_lost"],
+        })
+    return {
+        "season": season_public(season),
+        "standings": standings_public(),
+        "playerBoard": players,
+        "history": history,
+    }
 
 
 def _invite_code() -> str:
@@ -62,6 +116,7 @@ system_guild_pool: list[str] = []  # unused; kept for compat
 def init_faction_guilds() -> None:
     """Four house guilds — load ELO/wins/losses from SQLite."""
     store.ensure_factions(list(FACTIONS.keys()))
+    current_season()  # create Season 1 if needed
     for fid, fac in FACTIONS.items():
         row = store.get_faction(fid) or {"elo": 1000, "wins": 0, "losses": 0}
         gid = f"faction-{fid}"
@@ -303,6 +358,7 @@ def join_guild(player_id: str, code: str) -> dict | None:
 async def matchmaking_tick() -> None:
     while True:
         await asyncio.sleep(1.0)
+        current_season()  # rollover check
         now = asyncio.get_event_loop().time()
 
         # human vs human — different houses only
@@ -692,8 +748,10 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
             g = guilds.get(gid, {})
             if g.get("is_system"):
                 continue
+            season = current_season()
             for pid in g.get("player_ids", []):
                 store.record_player_duel(pid, won)
+                store.record_season_player_duel(season["id"], pid, won)
             # Award mastery XP to the fighter that just fought
             fighter_id = war.get(f"{side}_duel_fighter")
             picker = war.get(f"{side}_picker_pid")
@@ -803,6 +861,9 @@ async def finish_war(war_id: str) -> None:
         home_won = random.choice([True, False])
         away_won = not home_won
 
+    season = current_season()
+    sid = season["id"]
+
     for g, won, fid in (
         (home, home_won, home.get("faction_id")),
         (away, away_won, away.get("faction_id")),
@@ -818,7 +879,7 @@ async def finish_war(war_id: str) -> None:
             g["losses"] += 1
             g["elo"] = max(800, g["elo"] - random.randint(8, 22))
         if fid:
-            store.save_faction_stats(fid, g["elo"], g["wins"], g["losses"])
+            store.save_faction_stats(fid, g["elo"], g["wins"], g["losses"], season_id=sid)
 
     winner_faction = None
     if home.get("faction_id") and not home.get("is_system"):
@@ -831,7 +892,7 @@ async def finish_war(war_id: str) -> None:
     away_fid = away.get("faction_id") or "unknown"
     if away.get("is_system"):
         away_fid = away.get("faction_id") or away_fid
-    store.log_war(home_fid, away_fid, war["home_score"], war["away_score"], winner_faction)
+    store.log_war(home_fid, away_fid, war["home_score"], war["away_score"], winner_faction, season_id=sid)
 
     for side, won, picker_pid, picks in (
         ("home", home_won, war.get("home_picker_pid"), war.get("home_picks")),
@@ -843,12 +904,12 @@ async def finish_war(war_id: str) -> None:
             continue
         for pid in g.get("player_ids", []):
             store.record_player_war(pid, won)
+            store.record_season_player_war(sid, pid, won)
         if picker_pid and picks:
-            # Small war bonus on top of per-duel XP (roster familiarity, no extra W/L)
             for fighter_id in picks:
                 store.add_mastery(picker_pid, fighter_id, xp=4 if won else 1, won=won, record=False)
 
-    standings = standings_public()
+    board = leaderboard_payload()
 
     for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
         g = guilds[gid]
@@ -857,7 +918,7 @@ async def finish_war(war_id: str) -> None:
         won = home_won if you_are == "home" else away_won
         opp = away if you_are == "home" else home
         for pid in g["player_ids"]:
-            stats = store.player_public(pid)
+            stats = store.player_public(pid, season_id=sid)
             your_score = war["home_score"] if you_are == "home" else war["away_score"]
             their_score = war["away_score"] if you_are == "home" else war["home_score"]
             await send_player(pid, {
@@ -872,7 +933,10 @@ async def finish_war(war_id: str) -> None:
                 "guild": public_guild_profile(g),
                 "opponent": public_guild_profile(opp),
                 "stats": stats,
-                "standings": standings,
+                "standings": board["standings"],
+                "season": board["season"],
+                "playerBoard": board["playerBoard"],
+                "history": board["history"],
             })
 
     home_id, away_id = war["home_id"], war["away_id"]
@@ -912,7 +976,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
                 g = join_faction(pid, row["faction_id"])
                 if g:
                     guild = public_guild_profile(g)
-            stats = store.player_public(pid)
+            board = leaderboard_payload()
+            stats = store.player_public(pid, season_id=board["season"]["id"])
             await ws.send(_json({
                 "type": "auth.ok",
                 "playerId": pid,
@@ -921,7 +986,10 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
                 "guild": guild,
                 "stats": stats,
                 "factions": factions_public(),
-                "standings": standings_public(),
+                "standings": board["standings"],
+                "season": board["season"],
+                "playerBoard": board["playerBoard"],
+                "history": board["history"],
                 "restored": True,
             }))
             return
@@ -936,7 +1004,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "token": row["token"],
         }
         ws_to_player[ws] = pid
-        stats = store.player_public(pid)
+        board = leaderboard_payload()
+        stats = store.player_public(pid, season_id=board["season"]["id"])
         await ws.send(_json({
             "type": "auth.ok",
             "playerId": pid,
@@ -945,7 +1014,10 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "guild": None,
             "stats": stats,
             "factions": factions_public(),
-            "standings": standings_public(),
+            "standings": board["standings"],
+            "season": board["season"],
+            "playerBoard": board["playerBoard"],
+            "history": board["history"],
             "restored": False,
         }))
         return
@@ -960,12 +1032,16 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if not g:
             await ws.send(_json({"type": "error", "message": "Unknown house"}))
             return
-        stats = store.player_public(pid)
+        board = leaderboard_payload()
+        stats = store.player_public(pid, season_id=board["season"]["id"])
         await ws.send(_json({
             "type": "guild.updated",
             "guild": public_guild_profile(g),
             "stats": stats,
-            "standings": standings_public(),
+            "standings": board["standings"],
+            "season": board["season"],
+            "playerBoard": board["playerBoard"],
+            "history": board["history"],
         }))
         return
 
@@ -998,11 +1074,15 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             queue.remove(gid)
             guilds[gid]["queued"] = False
         leave_guild(pid, persist=True)
+        board = leaderboard_payload()
         await ws.send(_json({
             "type": "guild.updated",
             "guild": None,
-            "stats": store.player_public(pid),
-            "standings": standings_public(),
+            "stats": store.player_public(pid, season_id=board["season"]["id"]),
+            "standings": board["standings"],
+            "season": board["season"],
+            "playerBoard": board["playerBoard"],
+            "history": board["history"],
         }))
         return
 

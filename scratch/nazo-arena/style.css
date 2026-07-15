@@ -697,9 +697,50 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
   border-color: rgba(255, 209, 102, 0.45);
 }
 
-.standings-panel {
-  margin: 1rem 0;
-  font-size: 0.7rem;
+.season-banner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gold);
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.season-title {
+  font-family: Syne, sans-serif;
+  font-size: 0.95rem;
+  color: var(--gold);
+}
+
+.season-meta {
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.board-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.board-tab {
+  font-family: inherit;
+  font-size: 0.65rem;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.55rem;
+  cursor: pointer;
+}
+
+.board-tab.active {
+  color: var(--text);
+  border-color: var(--accent2);
+  color: var(--accent2);
+}
+
+.standings-row.history-row {
+  grid-template-columns: 2rem 1fr auto auto;
 }
 
 .standings-panel h3 {

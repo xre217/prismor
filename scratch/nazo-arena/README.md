@@ -56,6 +56,20 @@ python3 -m http.server 8080         # terminal 2
 
 When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
+## Seasons & leaderboard
+
+Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).
+
+On rollover:
+- House ELO / W-L reset to 1000 / 0–0
+- Champion house is archived
+- Career stats and fighter mastery are kept
+
+Guild hall board tabs:
+- **Houses** — current season ELO standings
+- **Captains** — top players by season war wins
+- **Past** — closed season champions
+
 ## Status effects (guild wars)
 
 | Status | Icon | Effect |

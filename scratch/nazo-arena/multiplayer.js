@@ -26,6 +26,10 @@
     factions: [],
     stats: null,
     standings: [],
+    season: null,
+    playerBoard: [],
+    history: [],
+    boardTab: "houses",
   };
 
   function send(type, payload = {}) {
@@ -60,6 +64,13 @@
     });
   }
 
+  function applyBoard(msg) {
+    if (msg.standings) mp.standings = msg.standings;
+    if (msg.season) mp.season = msg.season;
+    if (msg.playerBoard) mp.playerBoard = msg.playerBoard;
+    if (msg.history) mp.history = msg.history;
+  }
+
   function handleMessage(msg) {
     switch (msg.type) {
       case "auth.ok":
@@ -68,8 +79,8 @@
         mp.nickname = msg.nickname;
         mp.guild = msg.guild;
         mp.stats = msg.stats || null;
-        mp.standings = msg.standings || [];
         mp.factions = msg.factions || Object.values(window.NazoData.FACTIONS || {});
+        applyBoard(msg);
         if (msg.token) localStorage.setItem("nazo-arena-token", msg.token);
         setStatus(msg.restored ? "Welcome back · Online" : "Online");
         if (mp.guild) {
@@ -85,7 +96,7 @@
         mp.guild = msg.guild;
         if (msg.inviteCode) mp.inviteCode = msg.inviteCode;
         if (msg.stats) mp.stats = msg.stats;
-        if (msg.standings) mp.standings = msg.standings;
+        applyBoard(msg);
         if (mp.guild) applyHouseTheme(mp.guild.factionId);
         else applyHouseTheme(null);
         renderGuildHall();
@@ -131,7 +142,7 @@
         break;
       case "war.end":
         if (msg.stats) mp.stats = msg.stats;
-        if (msg.standings) mp.standings = msg.standings;
+        applyBoard(msg);
         showWarResult(msg);
         break;
     }
@@ -177,17 +188,42 @@
     });
   }
 
+  function renderSeasonBanner() {
+    const el = $("season-banner");
+    if (!el) return;
+    const s = mp.season;
+    if (!s) {
+      el.innerHTML = "";
+      return;
+    }
+    const left = s.daysLeft >= 1
+      ? `${s.daysLeft} days left`
+      : `${s.hoursLeft}h left`;
+    el.innerHTML = `
+      <div class="season-title">${s.name}</div>
+      <div class="season-meta">House ELO resets each season · ${left}</div>
+    `;
+  }
+
   function renderStandings() {
     const el = $("standings-panel");
     if (!el) return;
-    if (!mp.standings.length) {
-      el.innerHTML = `<h3>House Standings</h3><p class="muted">No wars recorded yet.</p>`;
-      return;
-    }
-    el.innerHTML = `
-      <h3>House Standings</h3>
-      <div class="standings-table">
-        ${mp.standings.map((s) => `
+    renderSeasonBanner();
+
+    const tabs = `
+      <div class="board-tabs">
+        <button type="button" class="board-tab ${mp.boardTab === "houses" ? "active" : ""}" data-tab="houses">Houses</button>
+        <button type="button" class="board-tab ${mp.boardTab === "captains" ? "active" : ""}" data-tab="captains">Captains</button>
+        <button type="button" class="board-tab ${mp.boardTab === "history" ? "active" : ""}" data-tab="history">Past</button>
+      </div>
+    `;
+
+    let body = "";
+    if (mp.boardTab === "houses") {
+      if (!mp.standings.length) {
+        body = `<p class="muted">No wars recorded this season yet.</p>`;
+      } else {
+        body = `<div class="standings-table">${mp.standings.map((s) => `
           <div class="standings-row">
             <span class="rank">#${s.rank}</span>
             <span class="crest">${s.crest}</span>
@@ -196,9 +232,45 @@
             <span class="record">${s.wins}W ${s.losses}L</span>
             <span class="members">${s.members} enlisted</span>
           </div>
-        `).join("")}
-      </div>
-    `;
+        `).join("")}</div>`;
+      }
+    } else if (mp.boardTab === "captains") {
+      if (!mp.playerBoard.length) {
+        body = `<p class="muted">Win a house war to appear on the captain board.</p>`;
+      } else {
+        body = `<div class="standings-table">${mp.playerBoard.map((p) => `
+          <div class="standings-row captains-row">
+            <span class="rank">#${p.rank}</span>
+            <span class="crest">${p.crest || "·"}</span>
+            <span class="house">${p.nickname}</span>
+            <span class="elo">${p.house || "—"}</span>
+            <span class="record">${p.warsWon}W ${p.warsLost}L</span>
+            <span class="members">${p.duelsWon}D</span>
+          </div>
+        `).join("")}</div>`;
+      }
+    } else {
+      if (!mp.history.length) {
+        body = `<p class="muted">No closed seasons yet.</p>`;
+      } else {
+        body = `<div class="standings-table">${mp.history.map((h) => `
+          <div class="standings-row history-row">
+            <span class="rank">${h.crest || h.championCrest || "🏆"}</span>
+            <span class="house">${h.name}</span>
+            <span class="elo">${h.championHouse || h.championFaction || "—"}</span>
+            <span class="record">${h.championElo ? h.championElo + " ELO" : ""}</span>
+          </div>
+        `).join("")}</div>`;
+      }
+    }
+
+    el.innerHTML = `<h3>Season Board</h3>${tabs}${body}`;
+    el.querySelectorAll(".board-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        mp.boardTab = btn.dataset.tab;
+        renderStandings();
+      });
+    });
   }
 
   function masteryInfo(fighterId) {
@@ -247,7 +319,8 @@
     el.innerHTML = `
       <div class="player-stats">
         <div class="stat-line"><strong>${s.nickname || mp.nickname}</strong></div>
-        <div class="stat-line">Wars ${s.warsWon}W ${s.warsLost}L · Duels ${s.duelsWon}W ${s.duelsLost}L</div>
+        <div class="stat-line">Career · Wars ${s.warsWon}W ${s.warsLost}L · Duels ${s.duelsWon}W ${s.duelsLost}L</div>
+        ${s.season ? `<div class="stat-line">Season · Wars ${s.season.warsWon}W ${s.season.warsLost}L · Duels ${s.season.duelsWon}W ${s.season.duelsLost}L</div>` : ""}
         ${mastery
           ? `<div class="mastery-row">${mastery}</div>`
           : `<div class="stat-line muted">No fighter mastery yet — draft a war roster.</div>`}
