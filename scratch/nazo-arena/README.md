@@ -102,6 +102,19 @@ Finished house wars are archived with draft picks and full duel logs.
 - **Live** — other houses can spectate an in-progress war (home POV, actions locked)
 - **Replays** — guild hall list + result screen “Watch Replay”; step or autoplay the combat log
 
+## Alliance bonds (co-op)
+
+Online members of the same house form an **alliance bond** during wars:
+
+| Online | Bond | Effect |
+|--------|------|--------|
+| 1 | Lone Wolf | — |
+| 2 | Duo Bond | +3 HP · open Regen (duel 1) |
+| 3 | Trio Bond | +5 HP · +1 Shield · open Focus (duel 1) |
+| 4+ | House United | +8 HP · +1 Power · +6% damage · open Focus |
+
+Each house ally can press **Alliance Assist** once per duel to heal the active fighter (+6 HP).
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

@@ -27,7 +27,7 @@
       <ul class="rules">
         <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
-        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply. Online allies form alliance bonds and can Assist once per duel.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
         <li><strong>Progress</strong> — seasons, relics, territories, daily quests, war replays, fighter mastery, and captain boards save across sessions.</li>
@@ -149,6 +149,7 @@
         <span id="score-label">Wins: 0</span>
       </div>
       <p id="battle-passive" class="battle-passive hidden"></p>
+      <p id="battle-alliance" class="battle-alliance hidden"></p>
       <p id="battle-mastery" class="battle-mastery hidden"></p>
       <p id="battle-relic" class="battle-relic hidden"></p>
       <p id="battle-intel" class="battle-intel hidden"></p>
@@ -176,6 +177,7 @@
         <button class="btn action" data-action="skill">✦ Skill</button>
         <button class="btn action" data-action="chaos">☠ Chaos</button>
       </div>
+      <button id="btn-war-assist" class="btn primary alt hidden" type="button">🤝 Alliance Assist (+6 HP)</button>
       <div id="swap-bar" class="swap hidden">
         <p>Fighter down! Send the next one:</p>
         <div id="swap-options" class="card-row small"></div>

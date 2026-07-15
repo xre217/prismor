@@ -35,6 +35,9 @@
     boardTab: "houses",
     contestTerritoryId: null,
     spectating: false,
+    canAssist: false,
+    alliance: null,
+    theirAlliance: null,
     replayView: null,
     replayDuelIdx: 0,
     replayLogIdx: 0,
@@ -133,6 +136,8 @@
         mp.opponent = msg.opponent;
         mp.draft = msg.draft || null;
         mp.contestTerritoryId = null;
+        mp.alliance = msg.alliance || null;
+        mp.theirAlliance = msg.theirAlliance || null;
         setStatus("War matched");
         showOpponentIntro(msg.opponent, msg.territory);
         break;
@@ -143,6 +148,11 @@
             || $("screen-war-intro").classList.contains("active")) {
           renderDraftBoard();
         }
+        break;
+      case "war.assist.ok":
+        mp.canAssist = false;
+        setAssistButton(false);
+        setStatus(msg.message || "Assist sent");
         break;
       case "war.duel.start":
         if (msg.spectator) mp.spectating = true;
@@ -236,11 +246,21 @@
         terrEl.textContent = "";
       }
     }
+    const bond = mp.alliance;
+    const their = mp.theirAlliance;
+    let bondLine = "";
+    if (bond) {
+      bondLine = `Your bond ${bond.icon} ${bond.name} (${bond.count} online)`;
+      if (their) bondLine += ` · Their ${their.icon} ${their.name}`;
+    }
     const members = opp.members.slice(0, 6).map((m) =>
       `<span class="member-chip">${m.name} <em>${m.lastSeen}</em></span>`
     ).join("");
     $("opp-members").innerHTML = members;
-    $("opp-motd").textContent = opp.motd ? `"${opp.motd}"` : "";
+    $("opp-motd").textContent = [
+      opp.motd ? `"${opp.motd}"` : "",
+      bondLine,
+    ].filter(Boolean).join(" · ") || "";
     showScreen("screen-war-intro");
   }
 
@@ -732,6 +752,7 @@
     const lab = g.lab || "";
     const house = g.house || g.name;
     const fac = FACTIONS[g.factionId] || {};
+    const bond = localAlliancePreview();
     const contestHint = mp.contestTerritoryId
       ? (() => {
           const t = (mp.territories || []).find((x) => x.id === mp.contestTerritoryId);
@@ -746,11 +767,13 @@
           <div class="guild-meta">${lab} · ELO ${g.elo} · ${g.wins}W ${g.losses}L · ${g.members.length} online</div>
           <div class="guild-meta">${g.motd || ""}</div>
           <div class="house-passive-tag">✦ ${fac.passiveName || g.passiveName || "Passive"}: ${fac.passiveDesc || ""}</div>
+          ${bond ? `<div class="alliance-tag">${bond.icon} ${bond.name} · ${bond.desc}</div>` : ""}
         </div>
       </div>
       <div class="member-list">${g.members.map((m) =>
         `<div class="member-row"><span>${m.name}</span><span class="role">${m.role}</span><span class="seen">${m.lastSeen}</span></div>`
       ).join("")}</div>
+      <p class="muted">More house members online → stronger alliance bonds in wars. Each ally can Assist once per duel (+6 HP).</p>
     `;
     const qBtn = $("btn-war-queue");
     qBtn.disabled = false;
@@ -951,12 +974,57 @@
       log(`Their relic — ${msg.theirRelic.icon} ${msg.theirRelic.name}`, "enemy");
     }
     (msg.log || []).forEach((e) => log(e.msg, e.cls));
+    if (msg.alliance) mp.alliance = msg.alliance;
+    if (msg.theirAlliance) mp.theirAlliance = msg.theirAlliance;
+    mp.canAssist = !!msg.canAssist && !msg.spectator;
     showBattlePassive(mp.guild?.factionId);
+    showAllianceBanner(msg.alliance || mp.alliance);
     showMasteryBanner(msg.yourMastery);
     showRelicBanner(msg.yourRelic);
     showIntel(null);
+    setAssistButton(mp.canAssist);
     setWarActions(!msg.spectator && !!msg.yourTurn);
     showScreen("screen-battle");
+  }
+
+  function showAllianceBanner(alliance) {
+    const el = $("battle-alliance");
+    if (!el) return;
+    if (alliance && alliance.tier > 1) {
+      el.textContent = `Alliance — ${alliance.icon} ${alliance.name}: ${alliance.desc}`;
+      el.classList.remove("hidden");
+    } else if (alliance) {
+      el.textContent = `Alliance — ${alliance.icon} ${alliance.name}`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
+  function setAssistButton(on) {
+    const btn = $("btn-war-assist");
+    if (!btn) return;
+    if (on && !mp.spectating) {
+      btn.classList.remove("hidden");
+      btn.disabled = false;
+    } else {
+      btn.classList.add("hidden");
+      btn.disabled = true;
+    }
+  }
+
+  function localAlliancePreview() {
+    const g = mp.guild;
+    if (!g) return null;
+    const n = Math.max(1, (g.members || []).length);
+    const tiers = {
+      1: { tier: 1, name: "Lone Wolf", icon: "🐺", desc: "Fighting alone — no alliance bonus.", count: n },
+      2: { tier: 2, name: "Duo Bond", icon: "🤝", desc: "+3 HP · open Regen on duel 1.", count: n },
+      3: { tier: 3, name: "Trio Bond", icon: "🔗", desc: "+5 HP · +1 Shield · open Focus on duel 1.", count: n },
+      4: { tier: 4, name: "House United", icon: "🏛", desc: "+8 HP · +1 Power · +6% damage · open Focus.", count: n },
+    };
+    const key = n >= 4 ? 4 : n;
+    return tiers[key];
   }
 
   function showMasteryBanner(mastery) {
@@ -1051,6 +1119,8 @@
     $("btn-war-queue").disabled = false;
     $("btn-war-cancel").classList.add("hidden");
     $("btn-war-intro-go").classList.remove("hidden");
+    setAssistButton(false);
+    mp.canAssist = false;
     if (msg.guild) mp.guild = msg.guild;
     mp.warId = null;
     const wasSpec = mp.spectating || msg.spectator;
@@ -1130,6 +1200,12 @@
   });
   $("btn-war-queue").addEventListener("click", queueWar);
   $("btn-war-cancel").addEventListener("click", cancelQueue);
+  $("btn-war-assist").addEventListener("click", () => {
+    if (!mp.canAssist || !mp.warId || mp.spectating) return;
+    send("war.assist", { warId: mp.warId });
+    mp.canAssist = false;
+    setAssistButton(false);
+  });
   $("btn-war-intro-go").addEventListener("click", startWarDraft);
   $("btn-result-guild").addEventListener("click", () => {
     $("btn-replay").classList.remove("hidden");

@@ -66,6 +66,14 @@ from replays import (
     finish_duel_capture,
     replay_summary,
 )
+from alliances import (
+    ASSIST_HEAL,
+    apply_alliance_duel_open,
+    apply_alliance_to_fighter,
+    apply_assist_heal,
+    bond_for_count,
+    bond_public,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -408,6 +416,31 @@ def online_member_ids(gid: str) -> list[str]:
     return out
 
 
+def alliance_for_guild(gid: str) -> dict:
+    """Bond from currently online human members. System rivals fake a modest bond."""
+    g = guilds.get(gid, {})
+    if g.get("is_system"):
+        # Disguised rivals look like a small squad
+        n = random.randint(2, 4)
+        names = [m.get("name", "ally") for m in (g.get("members") or [])[:n]]
+        return bond_public(n, names)
+    ids = online_member_ids(gid)
+    names = []
+    for pid in ids:
+        p = players.get(pid)
+        if p:
+            names.append(p.get("nickname") or "ally")
+    n = max(1, len(ids))
+    return bond_public(n, names)
+
+
+def refresh_war_alliances(war: dict) -> None:
+    war["home_alliance"] = alliance_for_guild(war["home_id"])
+    war["away_alliance"] = alliance_for_guild(war["away_id"])
+    # Per-duel assist tracking: duel_index -> set of helper pids
+    war.setdefault("assists", {})
+
+
 async def forfeit_war(war_id: str, forfeiting_gid: str) -> None:
     """End a war because the human side abandoned it."""
     war = wars.get(war_id)
@@ -636,8 +669,10 @@ async def start_war(
         "territory": territory_info,
         "replay": empty_replay_state(),
         "spectators": set(),
+        "assists": {},
     }
     wars[war_id] = war
+    refresh_war_alliances(war)
 
     payload = {
         "type": "war.matched",
@@ -652,6 +687,8 @@ async def start_war(
             "opponent": public_guild_profile(away),
             "youAre": "home",
             "draft": draft_public(war, "home"),
+            "alliance": war["home_alliance"],
+            "theirAlliance": war["away_alliance"],
         }
         await send_player(pid, msg)
 
@@ -662,6 +699,8 @@ async def start_war(
                 "opponent": public_guild_profile(home),
                 "youAre": "away",
                 "draft": draft_public(war, "away"),
+                "alliance": war["away_alliance"],
+                "theirAlliance": war["home_alliance"],
             }
             await send_player(pid, msg)
 
@@ -867,6 +906,12 @@ async def start_duel(war_id: str) -> None:
     apply_territory_bonuses(home_f, home_tb)
     apply_territory_bonuses(away_f, away_tb)
 
+    refresh_war_alliances(war)
+    home_bond = bond_for_count(war["home_alliance"]["count"])
+    away_bond = bond_for_count(war["away_alliance"]["count"])
+    apply_alliance_to_fighter(home_f, home_bond)
+    apply_alliance_to_fighter(away_f, away_bond)
+
     duel = DuelState(player=home_f, enemy=away_f)
     duel.player_hp = home_f["maxHp"]
     duel.enemy_hp = away_f["maxHp"]
@@ -876,12 +921,16 @@ async def start_duel(war_id: str) -> None:
     duel.away_relic = away_relic
     duel.home_territory = home_tb
     duel.away_territory = away_tb
+    duel.home_alliance = home_bond
+    duel.away_alliance = away_bond
 
     open_log: list = []
     apply_relic_duel_open(duel, True, home_relic, open_log)
     apply_relic_duel_open(duel, False, away_relic, open_log)
     apply_territory_duel_open(duel, True, home_tb, open_log, duel_index=idx)
     apply_territory_duel_open(duel, False, away_tb, open_log, duel_index=idx)
+    apply_alliance_duel_open(duel, True, home_bond, open_log, duel_index=idx)
+    apply_alliance_duel_open(duel, False, away_bond, open_log, duel_index=idx)
 
     begin_duel_capture(war, home_f, away_f, open_log)
 
@@ -891,6 +940,8 @@ async def start_duel(war_id: str) -> None:
     war["waiting_action"] = False
     war["home_duel_fighter"] = home_id
     war["away_duel_fighter"] = away_id
+    # Reset per-duel assist set
+    war.setdefault("assists", {})[idx] = set()
 
     msg = {
         "type": "war.duel.start",
@@ -905,6 +956,9 @@ async def start_duel(war_id: str) -> None:
         "yourRelic": None,
         "theirRelic": None,
         "territory": war.get("territory"),
+        "alliance": None,
+        "theirAlliance": None,
+        "canAssist": False,
         "state": duel.snapshot(),
         "log": open_log,
     }
@@ -921,6 +975,8 @@ async def start_duel(war_id: str) -> None:
             m["theirMastery"] = away_m
             m["yourRelic"] = home_r
             m["theirRelic"] = away_r
+            m["alliance"] = war["home_alliance"]
+            m["theirAlliance"] = war["away_alliance"]
             m["log"] = open_log
         else:
             m["yourFighter"] = away_f
@@ -929,6 +985,8 @@ async def start_duel(war_id: str) -> None:
             m["theirMastery"] = home_m
             m["yourRelic"] = away_r
             m["theirRelic"] = home_r
+            m["alliance"] = war["away_alliance"]
+            m["theirAlliance"] = war["home_alliance"]
             flipped = []
             for e in open_log:
                 cls = e.get("cls", "system")
@@ -950,7 +1008,9 @@ async def start_duel(war_id: str) -> None:
                     "enemy": snap["statuses"]["player"],
                 },
             }
+        ally = m["alliance"] or {}
         for pid in g["player_ids"]:
+            m["canAssist"] = int(ally.get("count") or 1) >= 2
             await send_player(pid, m)
 
     # Spectators always see home POV
@@ -965,6 +1025,9 @@ async def start_duel(war_id: str) -> None:
         "theirMastery": away_m,
         "yourRelic": home_r,
         "theirRelic": away_r,
+        "alliance": war["home_alliance"],
+        "theirAlliance": war["away_alliance"],
+        "canAssist": False,
         "log": open_log,
     }
     await notify_spectators(war_id, spec_msg)
@@ -1624,6 +1687,41 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             if specs and pid in specs:
                 specs.discard(pid)
         await ws.send(_json({"type": "war.unspectate.ok"}))
+        return
+
+    if mtype == "war.assist":
+        war_id = msg.get("warId")
+        war = wars.get(war_id)
+        if not war or war.get("phase") != "duel" or not war.get("duel"):
+            await ws.send(_json({"type": "error", "message": "No active duel"}))
+            return
+        gid = players[pid].get("guild_id")
+        if gid not in (war["home_id"], war["away_id"]):
+            await ws.send(_json({"type": "error", "message": "Not your war"}))
+            return
+        side = "home" if gid == war["home_id"] else "away"
+        ally = war.get(f"{side}_alliance") or {}
+        if int(ally.get("count") or 1) < 2:
+            await ws.send(_json({"type": "error", "message": "Need another house ally online to assist"}))
+            return
+        idx = war["duel_index"]
+        helped = war.setdefault("assists", {}).setdefault(idx, set())
+        if pid in helped:
+            await ws.send(_json({"type": "error", "message": "Already assisted this duel"}))
+            return
+        helped.add(pid)
+        helper = players[pid].get("nickname") or "Ally"
+        entries: list = []
+        apply_assist_heal(war["duel"], for_home=(side == "home"), entries=entries, helper_name=helper)
+        append_duel_log(war, entries)
+        await broadcast_duel_update(war_id, entries)
+        # Disable assist for this helper
+        await send_player(pid, {
+            "type": "war.assist.ok",
+            "warId": war_id,
+            "canAssist": False,
+            "message": f"You cheered (+{ASSIST_HEAL} HP max)",
+        })
         return
 
     if mtype == "war.queue":

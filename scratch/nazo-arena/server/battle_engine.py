@@ -67,6 +67,8 @@ class DuelState:
     away_relic: str | None = None
     home_territory: dict | None = None
     away_territory: dict | None = None
+    home_alliance: dict | None = None
+    away_alliance: dict | None = None
 
     def snapshot(self) -> dict:
         from status_effects import statuses_public
@@ -89,17 +91,20 @@ def _hit_damage(state: DuelState, attacker: dict, is_attacker_player: bool, mult
     from status_effects import focus_mult, shield_mult
     from relics import relic_damage_mult
     from territories import territory_damage_mult
+    from alliances import alliance_damage_mult
 
     if is_attacker_player:
         defender_stats = state.enemy["stats"]
         guarding = state.guarding_enemy
         relic_id = state.home_relic
         terr = state.home_territory
+        ally = state.home_alliance
     else:
         defender_stats = state.player["stats"]
         guarding = state.guarding_player
         relic_id = state.away_relic
         terr = state.away_territory
+        ally = state.away_alliance
     sf = shield_mult(state, not is_attacker_player)
     dmg = calc_damage(attacker, defender_stats, guarding, mult, ignore_shield, shield_factor=sf)
     dmg = max(
@@ -109,6 +114,7 @@ def _hit_damage(state: DuelState, attacker: dict, is_attacker_player: bool, mult
             * focus_mult(state, is_attacker_player)
             * relic_damage_mult(relic_id)
             * territory_damage_mult(terr)
+            * alliance_damage_mult(ally)
         ),
     )
     return dmg

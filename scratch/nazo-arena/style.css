@@ -608,6 +608,27 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
   letter-spacing: 0.06em;
 }
 
+.battle-alliance {
+  font-size: 0.68rem;
+  color: var(--gold);
+  text-align: center;
+  margin-bottom: 0.35rem;
+}
+
+.alliance-tag {
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--gold);
+}
+
+#btn-war-assist {
+  display: block;
+  width: 100%;
+  margin: 0.55rem 0 0.35rem;
+}
+
+#btn-war-assist.hidden { display: none; }
+
 .battle-mastery {
   font-size: 0.68rem;
   color: var(--accent2);
