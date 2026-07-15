@@ -56,6 +56,18 @@ python3 -m http.server 8080         # terminal 2
 
 When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
+## Status effects (guild wars)
+
+| Status | Icon | Effect |
+|--------|------|--------|
+| **Burn** | 🔥 | 5 damage at turn start (2 turns) |
+| **Stun** | 💫 | Skip next action |
+| **Weaken** | 💔 | Shield halved (2 turns) |
+| **Focus** | 🎯 | +30% damage on next attack |
+| **Regen** | 💚 | +5 HP at turn start (2 turns) |
+
+Sources include Chaos (burn), Phase/Deep Scan (weaken), Precision/Deep Scan/Foresight (focus), Bloom/Balance (regen), Reflect (stun chance), Constitution/Bloom (cleanse).
+
 ## Fighter mastery
 
 XP on each fighter unlocks combat bonuses in guild wars:

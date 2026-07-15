@@ -481,11 +481,27 @@
     }
   }
 
+  function renderStatuses(st) {
+    const statuses = st?.statuses || { player: [], enemy: [] };
+    [["player-statuses", statuses.player], ["enemy-statuses", statuses.enemy]].forEach(([id, list]) => {
+      const el = $(id);
+      if (!el) return;
+      if (!list || !list.length) {
+        el.innerHTML = "";
+        return;
+      }
+      el.innerHTML = list.map((s) =>
+        `<span class="status-chip ${s.kind || ""}" title="${s.name} (${s.turns})">${s.icon} ${s.turns}</span>`
+      ).join("");
+    });
+  }
+
   function updateWarUI(st) {
     $("player-hp").style.width = `${Math.max(0, (st.playerHp / st.playerMax) * 100)}%`;
     $("enemy-hp").style.width = `${Math.max(0, (st.enemyHp / st.enemyMax) * 100)}%`;
     $("player-hp-text").textContent = `${Math.max(0, st.playerHp)} / ${st.playerMax}`;
     $("enemy-hp-text").textContent = `${Math.max(0, st.enemyHp)} / ${st.enemyMax}`;
+    renderStatuses(st);
   }
 
   function setWarActions(on) {

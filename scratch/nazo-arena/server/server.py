@@ -622,6 +622,7 @@ async def start_duel(war_id: str) -> None:
                 "playerMax": duel.enemy["maxHp"],
                 "enemyMax": duel.player["maxHp"],
                 "guarding": {"player": duel.guarding_enemy, "enemy": duel.guarding_player},
+                "statuses": {"player": [], "enemy": []},
             }
         for pid in g["player_ids"]:
             await send_player(pid, m)
@@ -750,12 +751,17 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
             your_faction = d.home_faction
             log_entries = new_log
         else:
+            snap = d.snapshot()
             state = {
                 "playerHp": d.enemy_hp,
                 "enemyHp": d.player_hp,
                 "playerMax": d.enemy["maxHp"],
                 "enemyMax": d.player["maxHp"],
                 "guarding": {"player": d.guarding_enemy, "enemy": d.guarding_player},
+                "statuses": {
+                    "player": snap["statuses"]["enemy"],
+                    "enemy": snap["statuses"]["player"],
+                },
             }
             your_turn = war["turn"] == "away"
             your_faction = d.away_faction

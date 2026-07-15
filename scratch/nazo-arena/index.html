@@ -28,7 +28,7 @@
         <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
         <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
-        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
+        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
         <li><strong>Progress</strong> — wars and duels build fighter mastery (Adept → Legend), which boosts stats in guild wars.</li>
       </ul>
@@ -129,6 +129,7 @@
         <div class="fighter-panel player-side">
           <div id="player-sprite" class="sprite">?</div>
           <div id="player-name" class="fname">—</div>
+          <div id="player-statuses" class="status-row"></div>
           <div class="hp-bar"><div id="player-hp" class="hp-fill"></div></div>
           <div id="player-hp-text" class="hp-text">100 / 100</div>
         </div>
@@ -136,6 +137,7 @@
         <div class="fighter-panel enemy-side">
           <div id="enemy-sprite" class="sprite">?</div>
           <div id="enemy-name" class="fname">—</div>
+          <div id="enemy-statuses" class="status-row"></div>
           <div class="hp-bar"><div id="enemy-hp" class="hp-fill enemy"></div></div>
           <div id="enemy-hp-text" class="hp-text">100 / 100</div>
         </div>

@@ -616,6 +616,26 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
   letter-spacing: 0.04em;
 }
 
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: center;
+  min-height: 1.1rem;
+  margin: 0.2rem 0 0.35rem;
+}
+
+.status-chip {
+  font-size: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.35rem;
+  letter-spacing: 0.02em;
+}
+
+.status-chip.debuff { border-color: var(--accent); color: #f8a; }
+.status-chip.buff { border-color: var(--accent2); color: #9fe; }
+
 .battle-intel {
   font-size: 0.72rem;
   color: var(--accent2);
