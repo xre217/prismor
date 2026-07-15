@@ -30,7 +30,7 @@
         <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
-        <li><strong>Progress</strong> — seasons, relics, territories, daily quests, fighter mastery, and captain boards save across sessions.</li>
+        <li><strong>Progress</strong> — seasons, relics, territories, daily quests, war replays, fighter mastery, and captain boards save across sessions.</li>
       </ul>
       <button id="btn-how-back" class="btn ghost">Back</button>
     </section>
@@ -63,12 +63,33 @@
       <div id="territory-panel" class="territory-panel"></div>
       <div id="guild-panel"></div>
       <div id="standings-panel" class="standings-panel"></div>
+      <div id="replay-panel" class="replay-panel"></div>
       <div class="guild-actions">
         <button id="btn-war-queue" class="btn primary" disabled>Queue House War</button>
         <button id="btn-war-cancel" class="btn ghost hidden">Cancel Queue</button>
       </div>
       <button id="btn-leave-house" class="btn ghost">Leave House</button>
       <button id="btn-guild-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- War replay viewer -->
+    <section id="screen-replay" class="screen">
+      <h2>War Replay</h2>
+      <p id="replay-header" class="muted">—</p>
+      <div id="replay-draft" class="replay-draft"></div>
+      <div class="replay-duel-tabs" id="replay-duel-tabs"></div>
+      <div class="replay-fighters">
+        <div id="replay-home-card" class="replay-card"></div>
+        <div id="replay-score" class="replay-score">0 — 0</div>
+        <div id="replay-away-card" class="replay-card"></div>
+      </div>
+      <div id="replay-log" class="log replay-log"></div>
+      <div class="replay-controls">
+        <button id="btn-replay-prev" class="btn ghost">◀ Prev</button>
+        <button id="btn-replay-play" class="btn primary">Play</button>
+        <button id="btn-replay-next" class="btn ghost">Next ▶</button>
+      </div>
+      <button id="btn-replay-back" class="btn ghost">Back to Guild Hall</button>
     </section>
 
     <!-- War opponent intro (looks like a real guild) -->

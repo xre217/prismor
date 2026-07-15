@@ -58,6 +58,14 @@ from quests import (
     roll_fortune_relic,
     utc_day_key,
 )
+from replays import (
+    append_duel_log,
+    begin_duel_capture,
+    build_replay_payload,
+    empty_replay_state,
+    finish_duel_capture,
+    replay_summary,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -169,7 +177,41 @@ def leaderboard_payload() -> dict:
         "playerBoard": players,
         "history": history,
         "territories": territories_payload(),
+        "replays": replays_payload(),
+        "liveWars": live_wars_payload(),
     }
+
+
+def replays_payload(limit: int = 10, faction_id: str | None = None) -> list[dict]:
+    return [replay_summary(r, FACTIONS) for r in store.list_war_replays(limit, faction_id)]
+
+
+def live_wars_payload() -> list[dict]:
+    out = []
+    for war in wars.values():
+        if war.get("phase") == "done":
+            continue
+        home = guilds.get(war["home_id"], {})
+        away = guilds.get(war["away_id"], {})
+        home_f = home.get("faction_id")
+        away_f = away.get("faction_id")
+        hf = FACTIONS.get(home_f or "", {})
+        af = FACTIONS.get(away_f or "", {})
+        out.append({
+            "warId": war["id"],
+            "phase": war.get("phase"),
+            "homeFaction": home_f,
+            "awayFaction": away_f,
+            "homeHouse": hf.get("house", home_f),
+            "awayHouse": af.get("house", away_f),
+            "homeCrest": hf.get("crest", "◈"),
+            "awayCrest": af.get("crest", "◈"),
+            "homeScore": war.get("home_score", 0),
+            "awayScore": war.get("away_score", 0),
+            "duelIndex": int(war.get("duel_index", 0)) + (1 if war.get("phase") == "duel" else 0),
+            "territory": war.get("territory"),
+        })
+    return out
 
 
 def _invite_code() -> str:
@@ -275,6 +317,23 @@ async def send_player(player_id: str, msg: dict) -> None:
             await p["ws"].send(_json(msg))
         except Exception:
             pass
+
+
+async def notify_spectators(war_id: str, msg: dict) -> None:
+    war = wars.get(war_id)
+    if not war:
+        return
+    for pid in list(war.get("spectators") or []):
+        # Drop if they joined a fighting side
+        p = players.get(pid)
+        if not p:
+            war["spectators"].discard(pid)
+            continue
+        gid = p.get("guild_id")
+        if gid in (war["home_id"], war["away_id"]):
+            war["spectators"].discard(pid)
+            continue
+        await send_player(pid, {**msg, "spectator": True})
 
 
 async def broadcast_guild(guild_id: str, msg: dict) -> None:
@@ -575,6 +634,8 @@ async def start_war(
         "draft_deadline": asyncio.get_event_loop().time() + STEP_TIMEOUT_SEC,
         "territory_id": contested if contested in TERRITORIES else None,
         "territory": territory_info,
+        "replay": empty_replay_state(),
+        "spectators": set(),
     }
     wars[war_id] = war
 
@@ -822,7 +883,10 @@ async def start_duel(war_id: str) -> None:
     apply_territory_duel_open(duel, True, home_tb, open_log, duel_index=idx)
     apply_territory_duel_open(duel, False, away_tb, open_log, duel_index=idx)
 
+    begin_duel_capture(war, home_f, away_f, open_log)
+
     war["duel"] = duel
+    war["phase"] = "duel"
     war["turn"] = "home"
     war["waiting_action"] = False
     war["home_duel_fighter"] = home_id
@@ -889,6 +953,22 @@ async def start_duel(war_id: str) -> None:
         for pid in g["player_ids"]:
             await send_player(pid, m)
 
+    # Spectators always see home POV
+    spec_msg = {
+        **msg,
+        "youAre": "home",
+        "yourTurn": False,
+        "spectator": True,
+        "yourFighter": home_f,
+        "theirFighter": away_f,
+        "yourMastery": home_m,
+        "theirMastery": away_m,
+        "yourRelic": home_r,
+        "theirRelic": away_r,
+        "log": open_log,
+    }
+    await notify_spectators(war_id, spec_msg)
+
     if war["system_side"]:
         asyncio.create_task(system_turn_loop(war_id))
 
@@ -934,6 +1014,7 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
     d = war["duel"]
     is_player_turn = is_home
     entries = apply_player_action(d, action, is_player_turn=is_player_turn)
+    append_duel_log(war, entries)
 
     war["turn"] = "away" if expected == "home" else "home"
     war["waiting_action"] = False
@@ -948,6 +1029,8 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
         else:
             war["away_score"] += 1
             home_duel_won = False
+
+        finish_duel_capture(war, home_duel_won, d)
 
         for side, won in (("home", home_duel_won), ("away", not home_duel_won)):
             gid = war[f"{side}_id"]
@@ -999,6 +1082,17 @@ async def broadcast_duel_end(war_id: str, home_won: bool) -> None:
                 "theirScore": war["away_score"] if you_are == "home" else war["home_score"],
                 "duelIndex": war["duel_index"] + 1,
             })
+    await notify_spectators(war_id, {
+        "type": "war.duel.end",
+        "warId": war_id,
+        "won": home_won,
+        "homeScore": war["home_score"],
+        "awayScore": war["away_score"],
+        "yourScore": war["home_score"],
+        "theirScore": war["away_score"],
+        "duelIndex": war["duel_index"] + 1,
+        "spectator": True,
+    })
 
 
 async def broadcast_duel_update(war_id: str, new_log: list) -> None:
@@ -1055,6 +1149,20 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
                 "housePassive": passive.get("name"),
             })
 
+    # Spectators — home POV
+    from house_passives import PASSIVES, ravenclaw_intel
+    await notify_spectators(war_id, {
+        "type": "war.duel.update",
+        "warId": war_id,
+        "log": new_log,
+        "state": d.snapshot(),
+        "yourTurn": False,
+        "opponentThinking": True,
+        "opponentLastAction": ravenclaw_intel(d, True),
+        "housePassive": PASSIVES.get(d.home_faction or "", {}).get("name"),
+        "spectator": True,
+    })
+
 
 async def finish_war(war_id: str) -> None:
     war = wars.get(war_id)
@@ -1101,6 +1209,20 @@ async def finish_war(war_id: str) -> None:
     if away.get("is_system"):
         away_fid = away.get("faction_id") or away_fid
     store.log_war(home_fid, away_fid, war["home_score"], war["away_score"], winner_faction, season_id=sid)
+
+    # Persist replay archive (completed duels)
+    if war.get("replay", {}).get("current"):
+        # Abandoned mid-duel — drop incomplete capture
+        war["replay"]["current"] = None
+    replay_payload = build_replay_payload(
+        war,
+        home_faction=home_fid,
+        away_faction=away_fid,
+        winner_faction=winner_faction,
+        season_id=sid,
+    )
+    store.save_war_replay(replay_payload)
+    war["replay_id"] = replay_payload["id"]
 
     seized = None
     tid = war.get("territory_id")
@@ -1161,9 +1283,33 @@ async def finish_war(war_id: str) -> None:
                 "playerBoard": board["playerBoard"],
                 "history": board["history"],
                 "territories": board["territories"],
+                "replays": board["replays"],
+                "liveWars": board["liveWars"],
                 "territory": seized or war.get("territory"),
+                "replayId": war.get("replay_id"),
                 "relicDrop": drop_info,
             })
+
+    # Tell spectators the war ended, then clear
+    await notify_spectators(war_id, {
+        "type": "war.end",
+        "warId": war_id,
+        "won": home_won,
+        "spectator": True,
+        "homeScore": war["home_score"],
+        "awayScore": war["away_score"],
+        "yourScore": war["home_score"],
+        "theirScore": war["away_score"],
+        "replayId": war.get("replay_id"),
+        "replays": board["replays"],
+        "liveWars": board["liveWars"],
+        "standings": board["standings"],
+        "season": board["season"],
+        "playerBoard": board["playerBoard"],
+        "history": board["history"],
+        "territories": board["territories"],
+    })
+    war.get("spectators", set()).clear()
 
     home_id, away_id = war["home_id"], war["away_id"]
     del wars[war_id]
@@ -1217,6 +1363,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
                 "playerBoard": board["playerBoard"],
                 "history": board["history"],
                 "territories": board["territories"],
+                "replays": board["replays"],
+                "liveWars": board["liveWars"],
                 "restored": True,
             }))
             return
@@ -1248,6 +1396,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "playerBoard": board["playerBoard"],
             "history": board["history"],
             "territories": board["territories"],
+            "replays": board["replays"],
+            "liveWars": board["liveWars"],
             "restored": False,
         }))
         return
@@ -1273,6 +1423,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "playerBoard": board["playerBoard"],
             "history": board["history"],
             "territories": board["territories"],
+            "replays": board["replays"],
+            "liveWars": board["liveWars"],
         }))
         return
 
@@ -1316,6 +1468,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "playerBoard": board["playerBoard"],
             "history": board["history"],
             "territories": board["territories"],
+            "replays": board["replays"],
+            "liveWars": board["liveWars"],
         }))
         return
 
@@ -1408,6 +1562,68 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "stats": store.player_public(pid, season_id=board["season"]["id"]),
             "shopPurchase": result,
         }))
+        return
+
+    if mtype == "replay.get":
+        rid = msg.get("replayId")
+        payload = store.get_war_replay(rid) if rid else None
+        if not payload:
+            await ws.send(_json({"type": "error", "message": "Replay not found"}))
+            return
+        await ws.send(_json({"type": "replay.data", "replay": payload}))
+        return
+
+    if mtype == "war.spectate":
+        war_id = msg.get("warId")
+        war = wars.get(war_id)
+        if not war or war.get("phase") == "done":
+            await ws.send(_json({"type": "error", "message": "War not available"}))
+            return
+        gid = players[pid].get("guild_id")
+        if gid in (war["home_id"], war["away_id"]):
+            await ws.send(_json({"type": "error", "message": "You are already in this war"}))
+            return
+        # leave other spectator seats
+        for w in wars.values():
+            specs = w.get("spectators")
+            if specs and pid in specs:
+                specs.discard(pid)
+        war.setdefault("spectators", set()).add(pid)
+        home = guilds[war["home_id"]]
+        away = guilds[war["away_id"]]
+        snap = {
+            "type": "war.spectate.ok",
+            "warId": war_id,
+            "phase": war["phase"],
+            "homeScore": war["home_score"],
+            "awayScore": war["away_score"],
+            "duelIndex": war["duel_index"] + (1 if war.get("duel") else 0),
+            "opponent": public_guild_profile(away),
+            "home": public_guild_profile(home),
+            "territory": war.get("territory"),
+            "spectator": True,
+        }
+        if war.get("phase") == "duel" and war.get("duel"):
+            d = war["duel"]
+            snap.update({
+                "type": "war.duel.start",
+                "youAre": "home",
+                "yourTurn": False,
+                "yourFighter": d.player,
+                "theirFighter": d.enemy,
+                "state": d.snapshot(),
+                "log": list(d.log[-12:]),
+                "spectator": True,
+            })
+        await ws.send(_json(snap))
+        return
+
+    if mtype == "war.unspectate":
+        for w in wars.values():
+            specs = w.get("spectators")
+            if specs and pid in specs:
+                specs.discard(pid)
+        await ws.send(_json({"type": "war.unspectate.ok"}))
         return
 
     if mtype == "war.queue":

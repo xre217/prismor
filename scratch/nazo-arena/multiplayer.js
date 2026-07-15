@@ -30,8 +30,15 @@
     playerBoard: [],
     history: [],
     territories: [],
+    replays: [],
+    liveWars: [],
     boardTab: "houses",
     contestTerritoryId: null,
+    spectating: false,
+    replayView: null,
+    replayDuelIdx: 0,
+    replayLogIdx: 0,
+    replayTimer: null,
   };
 
   function send(type, payload = {}) {
@@ -72,6 +79,8 @@
     if (msg.playerBoard) mp.playerBoard = msg.playerBoard;
     if (msg.history) mp.history = msg.history;
     if (msg.territories) mp.territories = msg.territories;
+    if (msg.replays) mp.replays = msg.replays;
+    if (msg.liveWars) mp.liveWars = msg.liveWars;
   }
 
   function handleMessage(msg) {
@@ -136,6 +145,7 @@
         }
         break;
       case "war.duel.start":
+        if (msg.spectator) mp.spectating = true;
         startWarDuel(msg);
         break;
       case "war.duel.update":
@@ -143,6 +153,39 @@
         break;
       case "war.duel.end":
         onDuelEnd(msg);
+        break;
+      case "war.spectate.ok":
+        mp.spectating = true;
+        mp.warId = msg.warId;
+        mp.youAre = "home";
+        setStatus(`Spectating ${msg.home?.house || "home"} vs ${msg.opponent?.house || "away"}`);
+        if (msg.phase === "draft") {
+          $("opp-crest").textContent = msg.opponent?.crest || "◈";
+          $("opp-name").textContent = `${msg.home?.house || "Home"} vs ${msg.opponent?.house || "Away"}`;
+          $("opp-tag").textContent = "LIVE";
+          $("opp-elo").textContent = `Score ${msg.homeScore}–${msg.awayScore} · draft in progress`;
+          const terrEl = $("opp-territory");
+          if (terrEl) {
+            if (msg.territory) {
+              terrEl.classList.remove("hidden");
+              terrEl.textContent = `Contesting ${msg.territory.icon} ${msg.territory.name}`;
+            } else terrEl.classList.add("hidden");
+          }
+          $("opp-members").innerHTML = "";
+          $("opp-motd").textContent = "Spectating — waiting for duels…";
+          showScreen("screen-war-intro");
+          $("btn-war-intro-go").classList.add("hidden");
+        }
+        break;
+      case "replay.data":
+        openReplayViewer(msg.replay);
+        break;
+      case "war.unspectate.ok":
+        mp.spectating = false;
+        mp.warId = null;
+        setStatus("Left spectator seat");
+        showScreen("screen-guild");
+        renderGuildHall();
         break;
       case "relic.updated":
         if (msg.stats) mp.stats = msg.stats;
@@ -516,12 +559,170 @@
     });
   }
 
+  function renderReplayPanel() {
+    const el = $("replay-panel");
+    if (!el) return;
+    const live = mp.liveWars || [];
+    const replays = mp.replays || [];
+    const myFid = mp.guild?.factionId;
+
+    const liveHtml = live.length
+      ? `<div class="replay-list">${live.map((w) => {
+          const mine = myFid && (w.homeFaction === myFid || w.awayFaction === myFid);
+          return `
+            <div class="replay-row live">
+              <div class="replay-match">
+                <span>${w.homeCrest} ${w.homeHouse}</span>
+                <span class="replay-vs">${w.homeScore}–${w.awayScore}</span>
+                <span>${w.awayCrest} ${w.awayHouse}</span>
+              </div>
+              <div class="replay-meta">${w.phase}${w.territory ? ` · ${w.territory.icon}` : ""}</div>
+              ${mine
+                ? `<span class="quest-pending">Your war</span>`
+                : `<button type="button" class="btn tiny spectate-btn" data-id="${w.warId}">Spectate</button>`}
+            </div>`;
+        }).join("")}</div>`
+      : `<p class="muted">No live wars right now.</p>`;
+
+    const replayHtml = replays.length
+      ? `<div class="replay-list">${replays.map((r) => `
+          <button type="button" class="replay-row" data-id="${r.id}">
+            <div class="replay-match">
+              <span>${r.homeCrest} ${r.homeHouse}</span>
+              <span class="replay-vs">${r.homeScore}–${r.awayScore}</span>
+              <span>${r.awayCrest} ${r.awayHouse}</span>
+            </div>
+            <div class="replay-meta">Watch replay</div>
+          </button>
+        `).join("")}</div>`
+      : `<p class="muted">Finish a house war to archive a replay.</p>`;
+
+    el.innerHTML = `
+      <h3>Wars · Live & Replays</h3>
+      <h4 class="quest-shop-title">Live</h4>
+      ${liveHtml}
+      <h4 class="quest-shop-title">Recent Replays</h4>
+      ${replayHtml}
+    `;
+    el.querySelectorAll(".spectate-btn").forEach((btn) => {
+      btn.addEventListener("click", () => send("war.spectate", { warId: btn.dataset.id }));
+    });
+    el.querySelectorAll(".replay-row[data-id]:not(.live)").forEach((btn) => {
+      btn.addEventListener("click", () => send("replay.get", { replayId: btn.dataset.id }));
+    });
+  }
+
+  function stopReplayTimer() {
+    if (mp.replayTimer) {
+      clearInterval(mp.replayTimer);
+      mp.replayTimer = null;
+    }
+    const play = $("btn-replay-play");
+    if (play) play.textContent = "Play";
+  }
+
+  function openReplayViewer(replay) {
+    stopReplayTimer();
+    mp.replayView = replay;
+    mp.replayDuelIdx = 0;
+    mp.replayLogIdx = 0;
+    const home = FACTIONS[replay.homeFaction] || {};
+    const away = FACTIONS[replay.awayFaction] || {};
+    $("replay-header").textContent =
+      `${home.crest || ""} ${home.house || replay.homeFaction} ${replay.homeScore}–${replay.awayScore} ${away.house || replay.awayFaction} ${away.crest || ""}`;
+    const draft = replay.draft || {};
+    $("replay-draft").innerHTML = `
+      <div>Home bans: ${(draft.homeBans || []).join(", ") || "—"} · picks: ${(draft.homePicks || []).join(", ") || "—"}</div>
+      <div>Away bans: ${(draft.awayBans || []).join(", ") || "—"} · picks: ${(draft.awayPicks || []).join(", ") || "—"}</div>
+      ${replay.territory ? `<div>Territory: ${replay.territory.icon} ${replay.territory.name}</div>` : ""}
+    `;
+    const tabs = $("replay-duel-tabs");
+    const duels = replay.duels || [];
+    tabs.innerHTML = duels.map((d, i) =>
+      `<button type="button" class="board-tab ${i === 0 ? "active" : ""}" data-i="${i}">Duel ${d.index || i + 1}</button>`
+    ).join("") || `<span class="muted">No duel logs captured.</span>`;
+    tabs.querySelectorAll(".board-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        stopReplayTimer();
+        mp.replayDuelIdx = Number(btn.dataset.i);
+        mp.replayLogIdx = 0;
+        renderReplayDuel();
+      });
+    });
+    showScreen("screen-replay");
+    renderReplayDuel();
+  }
+
+  function currentReplayDuel() {
+    return (mp.replayView?.duels || [])[mp.replayDuelIdx] || null;
+  }
+
+  function renderReplayDuel() {
+    const duel = currentReplayDuel();
+    const tabs = $("replay-duel-tabs");
+    if (tabs) {
+      tabs.querySelectorAll(".board-tab").forEach((b, i) => {
+        b.classList.toggle("active", i === mp.replayDuelIdx);
+      });
+    }
+    if (!duel) {
+      $("replay-home-card").textContent = "—";
+      $("replay-away-card").textContent = "—";
+      $("replay-score").textContent = "—";
+      $("replay-log").innerHTML = `<div class="log-line system">No data</div>`;
+      return;
+    }
+    const hf = duel.homeFighter || {};
+    const af = duel.awayFighter || {};
+    $("replay-home-card").innerHTML = `<div class="r-icon">${hf.icon || "◈"}</div><div>${hf.name || "?"}</div><div class="muted">${duel.finalHomeHp ?? "?"} HP</div>`;
+    $("replay-away-card").innerHTML = `<div class="r-icon">${af.icon || "◈"}</div><div>${af.name || "?"}</div><div class="muted">${duel.finalAwayHp ?? "?"} HP</div>`;
+    $("replay-score").textContent = duel.homeWon ? "Home win" : "Away win";
+    const logEl = $("replay-log");
+    const lines = duel.log || [];
+    const shown = lines.slice(0, Math.max(1, mp.replayLogIdx));
+    logEl.innerHTML = shown.map((e) =>
+      `<div class="log-line ${e.cls || "system"}">${e.msg}</div>`
+    ).join("");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function replayStep(delta) {
+    const duel = currentReplayDuel();
+    if (!duel) return;
+    const lines = duel.log || [];
+    mp.replayLogIdx = Math.max(0, Math.min(lines.length, mp.replayLogIdx + delta));
+    if (mp.replayLogIdx === 0 && delta < 0) mp.replayLogIdx = 0;
+    renderReplayDuel();
+    if (mp.replayLogIdx >= lines.length) stopReplayTimer();
+  }
+
+  function toggleReplayPlay() {
+    if (mp.replayTimer) {
+      stopReplayTimer();
+      return;
+    }
+    const duel = currentReplayDuel();
+    if (!duel) return;
+    if (mp.replayLogIdx >= (duel.log || []).length) mp.replayLogIdx = 0;
+    $("btn-replay-play").textContent = "Pause";
+    mp.replayTimer = setInterval(() => {
+      const d = currentReplayDuel();
+      if (!d || mp.replayLogIdx >= (d.log || []).length) {
+        stopReplayTimer();
+        return;
+      }
+      mp.replayLogIdx += 1;
+      renderReplayDuel();
+    }, 450);
+  }
+
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
     renderQuestPanel();
     renderRelicPanel();
     renderTerritoryMap();
+    renderReplayPanel();
     const g = mp.guild;
     if (!g) {
       $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
@@ -707,12 +908,18 @@
     window.NazoSolo.state.mode = "war";
     mp.yourFighter = msg.yourFighter;
     mp.theirFighter = msg.theirFighter;
-    mp.yourTurn = msg.yourTurn === true;
+    mp.yourTurn = msg.spectator ? false : msg.yourTurn === true;
+    if (msg.spectator) mp.spectating = true;
+    if (msg.youAre) mp.youAre = msg.youAre;
 
     const yourScore = mp.youAre === "away" ? msg.awayScore : msg.homeScore;
     const theirScore = mp.youAre === "away" ? msg.homeScore : msg.awayScore;
-    $("tier-label").textContent = `Duel ${msg.duelIndex} / 3`;
-    $("score-label").textContent = `You ${yourScore} — ${theirScore} Them`;
+    $("tier-label").textContent = msg.spectator
+      ? `Spectating · Duel ${msg.duelIndex} / 3`
+      : `Duel ${msg.duelIndex} / 3`;
+    $("score-label").textContent = msg.spectator
+      ? `${yourScore} — ${theirScore}`
+      : `You ${yourScore} — ${theirScore} Them`;
 
     window.NazoSolo.state.active = mp.yourFighter;
     window.NazoSolo.state.enemy = mp.theirFighter;
@@ -730,6 +937,7 @@
     $("enemy-name").textContent = mp.theirFighter.name;
     updateWarUI(msg.state);
     log(`— Duel ${msg.duelIndex}: ${mp.yourFighter.name} vs ${mp.theirFighter.name} —`);
+    if (msg.spectator) log("Spectating — home POV (actions disabled)", "system");
     if (msg.yourMastery && msg.yourMastery.tier > 0) {
       log(`Your mastery — ${msg.yourMastery.tierName}: ${msg.yourMastery.bonusDesc}`, "crit");
     }
@@ -747,7 +955,7 @@
     showMasteryBanner(msg.yourMastery);
     showRelicBanner(msg.yourRelic);
     showIntel(null);
-    setWarActions(!!msg.yourTurn);
+    setWarActions(!msg.spectator && !!msg.yourTurn);
     showScreen("screen-battle");
   }
 
@@ -797,6 +1005,7 @@
   }
 
   function setWarActions(on) {
+    if (mp.spectating) on = false;
     document.querySelectorAll("#action-bar .btn.action").forEach((b) => { b.disabled = !on; });
     mp.yourTurn = on;
   }
@@ -807,6 +1016,10 @@
     window.NazoSolo.state.playerHp = msg.state.playerHp;
     window.NazoSolo.state.enemyHp = msg.state.enemyHp;
     if (msg.opponentLastAction) showIntel(msg.opponentLastAction);
+    if (mp.spectating) {
+      setWarActions(false);
+      return;
+    }
     if (msg.opponentThinking) {
       setWarActions(false);
       log("Opponent is thinking...", "system");
@@ -817,7 +1030,9 @@
 
   function onDuelEnd(msg) {
     setWarActions(false);
-    $("score-label").textContent = `You ${msg.yourScore} — ${msg.theirScore} Them`;
+    $("score-label").textContent = mp.spectating
+      ? `${msg.yourScore} — ${msg.theirScore}`
+      : `You ${msg.yourScore} — ${msg.theirScore} Them`;
     log(
       msg.won
         ? `✦ Duel ${msg.duelIndex} won! Score ${msg.yourScore}–${msg.theirScore}`
@@ -827,7 +1042,7 @@
   }
 
   function sendAction(action) {
-    if (!mp.yourTurn || !mp.warId) return;
+    if (mp.spectating || !mp.yourTurn || !mp.warId) return;
     setWarActions(false);
     send("war.action", { warId: mp.warId, action });
   }
@@ -835,11 +1050,31 @@
   function showWarResult(msg) {
     $("btn-war-queue").disabled = false;
     $("btn-war-cancel").classList.add("hidden");
-    mp.guild = msg.guild;
+    $("btn-war-intro-go").classList.remove("hidden");
+    if (msg.guild) mp.guild = msg.guild;
     mp.warId = null;
+    const wasSpec = mp.spectating || msg.spectator;
+    mp.spectating = false;
     renderGuildHall();
     const your = msg.yourScore ?? (mp.youAre === "away" ? msg.awayScore : msg.homeScore);
     const their = msg.theirScore ?? (mp.youAre === "away" ? msg.homeScore : msg.awayScore);
+    if (wasSpec) {
+      $("result-art").textContent = "👁";
+      $("result-title").textContent = "War Complete";
+      let body = `Final score ${msg.homeScore ?? your}–${msg.awayScore ?? their}.`;
+      if (msg.replayId) body += " Open Replays in the guild hall to re-watch.";
+      $("result-body").textContent = body;
+      $("btn-replay").classList.add("hidden");
+      $("btn-result-guild").classList.remove("hidden");
+      if (msg.replayId) {
+        $("btn-replay").textContent = "Watch Replay";
+        $("btn-replay").classList.remove("hidden");
+        $("btn-replay").onclick = () => send("replay.get", { replayId: msg.replayId });
+      }
+      setStatus("Spectated war ended");
+      showScreen("screen-result");
+      return;
+    }
     const oppName = msg.opponent.house || msg.opponent.name;
     $("result-art").textContent = msg.won ? "🏆" : "💀";
     $("result-title").textContent = msg.won ? "Guild Victory" : "Guild Defeat";
@@ -855,10 +1090,16 @@
         ? ` Your house now holds ${t.icon} ${t.name}.`
         : ` ${t.icon} ${t.name} slipped away.`;
     }
+    if (msg.replayId) body += " Replay saved.";
     mp.contestTerritoryId = null;
     $("result-body").textContent = body;
     $("btn-replay").classList.add("hidden");
     $("btn-result-guild").classList.remove("hidden");
+    if (msg.replayId) {
+      $("btn-replay").textContent = "Watch Replay";
+      $("btn-replay").classList.remove("hidden");
+      $("btn-replay").onclick = () => send("replay.get", { replayId: msg.replayId });
+    }
     setStatus(msg.won ? "Victory recorded" : "Defeat recorded");
     showScreen("screen-result");
   }
@@ -876,10 +1117,12 @@
   $("btn-login").addEventListener("click", login);
   $("btn-guild-back").addEventListener("click", () => {
     cancelQueueAndLeaveHall();
+    if (mp.spectating) send("war.unspectate");
     showScreen("screen-title");
   });
   $("btn-leave-house").addEventListener("click", () => {
     cancelQueueAndLeaveHall();
+    if (mp.spectating) send("war.unspectate");
     send("guild.leave");
     applyHouseTheme(null);
     renderHouseSelect();
@@ -891,8 +1134,25 @@
   $("btn-result-guild").addEventListener("click", () => {
     $("btn-replay").classList.remove("hidden");
     $("btn-result-guild").classList.add("hidden");
+    $("btn-replay").textContent = "Run it back";
+    $("btn-replay").onclick = null;
     showScreen("screen-guild");
   });
+  $("btn-replay-back").addEventListener("click", () => {
+    stopReplayTimer();
+    mp.replayView = null;
+    showScreen("screen-guild");
+    renderGuildHall();
+  });
+  $("btn-replay-prev").addEventListener("click", () => {
+    stopReplayTimer();
+    replayStep(-1);
+  });
+  $("btn-replay-next").addEventListener("click", () => {
+    stopReplayTimer();
+    replayStep(1);
+  });
+  $("btn-replay-play").addEventListener("click", toggleReplayPlay);
 
   window.NazoMP = { sendAction, mp };
 })();

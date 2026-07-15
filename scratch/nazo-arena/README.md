@@ -95,6 +95,13 @@ Three quests refresh each **UTC day** in the guild hall:
 
 Spend **quest points** in the shop: Mastery Tome (30), Relic Cache (55), Fortune Draw (80).
 
+## Spectate & war replays
+
+Finished house wars are archived with draft picks and full duel logs.
+
+- **Live** — other houses can spectate an in-progress war (home POV, actions locked)
+- **Replays** — guild hall list + result screen “Watch Replay”; step or autoplay the combat log
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

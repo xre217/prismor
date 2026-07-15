@@ -121,6 +121,24 @@ CREATE INDEX IF NOT EXISTS idx_daily_quests_player_day
     ON player_daily_quests(player_id, day_key);
 """
 
+REPLAY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS war_replays (
+    id TEXT PRIMARY KEY,
+    season_id INTEGER,
+    home_faction TEXT NOT NULL,
+    away_faction TEXT NOT NULL,
+    home_score INTEGER NOT NULL,
+    away_score INTEGER NOT NULL,
+    winner_faction TEXT,
+    territory_id TEXT,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_war_replays_created ON war_replays(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_war_replays_season ON war_replays(season_id);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -137,6 +155,7 @@ class ArenaStore:
         self.conn.executescript(RELIC_SCHEMA)
         self.conn.executescript(TERRITORY_SCHEMA)
         self.conn.executescript(QUEST_SCHEMA)
+        self.conn.executescript(REPLAY_SCHEMA)
         self._migrate_war_log_season()
         self._migrate_equipped_relic()
         self._migrate_quest_points()
@@ -372,6 +391,71 @@ class ArenaStore:
             (pid, day_key, quest_id),
         ).fetchone()
         return dict(row) if row else None
+
+    # --- war replays ---
+
+    def save_war_replay(self, payload: dict) -> None:
+        import json
+
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO war_replays (
+                id, season_id, home_faction, away_faction,
+                home_score, away_score, winner_faction, territory_id,
+                payload, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["id"],
+                payload.get("seasonId"),
+                payload["homeFaction"],
+                payload["awayFaction"],
+                payload["homeScore"],
+                payload["awayScore"],
+                payload.get("winnerFaction"),
+                (payload.get("territory") or {}).get("id") if payload.get("territory") else None,
+                json.dumps(payload, separators=(",", ":")),
+                _now(),
+            ),
+        )
+        self.conn.commit()
+
+    def list_war_replays(self, limit: int = 12, faction_id: str | None = None) -> list[dict]:
+        if faction_id:
+            rows = self.conn.execute(
+                """
+                SELECT id, season_id, home_faction, away_faction, home_score, away_score,
+                       winner_faction, territory_id, created_at
+                FROM war_replays
+                WHERE home_faction = ? OR away_faction = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (faction_id, faction_id, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, season_id, home_faction, away_faction, home_score, away_score,
+                       winner_faction, territory_id, created_at
+                FROM war_replays
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_war_replay(self, replay_id: str) -> dict | None:
+        import json
+
+        row = self.conn.execute(
+            "SELECT payload FROM war_replays WHERE id = ?", (replay_id,)
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except json.JSONDecodeError:
+            return None
 
     # --- seasons ---
 

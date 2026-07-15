@@ -766,6 +766,100 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
   .quest-shop { grid-template-columns: 1fr; }
 }
 
+.replay-panel {
+  margin: 0.75rem 0 1rem;
+}
+
+.replay-panel h3 {
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+  color: var(--gold);
+}
+
+.replay-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.replay-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.5rem 0.55rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.replay-row.live { cursor: default; border-color: var(--accent2); }
+
+.replay-match {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.replay-vs { color: var(--gold); }
+.replay-meta { font-size: 0.55rem; color: var(--muted); }
+
+.replay-draft {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin: 0.5rem 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.replay-duel-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+}
+
+.replay-fighters {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.replay-card {
+  border: 1px solid var(--border);
+  padding: 0.55rem;
+  text-align: center;
+  font-size: 0.72rem;
+}
+
+.replay-card .r-icon { font-size: 1.4rem; }
+.replay-score {
+  font-family: Syne, sans-serif;
+  color: var(--gold);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.replay-log {
+  max-height: 220px;
+  margin-bottom: 0.75rem;
+}
+
+.replay-controls {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
 .territory-panel {
   margin: 0.75rem 0 1rem;
 }
