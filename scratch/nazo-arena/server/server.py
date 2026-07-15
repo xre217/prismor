@@ -11,9 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from websockets.asyncio.server import ServerConnection
 import websockets
-from websockets.server import WebSocketServerProtocol
-
 from battle_engine import DuelState, ai_choose_action, apply_player_action, duel_winner, fighter_from_id
 from draft import (
     STEP_TIMEOUT_SEC,
@@ -468,9 +467,12 @@ async def forfeit_war(war_id: str, forfeiting_gid: str) -> None:
     if forfeiting_gid == war["home_id"]:
         war["away_score"] = max(war["away_score"], 2)
         war["home_score"] = min(war["home_score"], 1)
+        war["forfeit_side"] = "home"
     else:
         war["home_score"] = max(war["home_score"], 2)
         war["away_score"] = min(war["away_score"], 1)
+        war["forfeit_side"] = "away"
+    war["forfeit"] = True
     await finish_war(war_id)
 
 
@@ -1630,6 +1632,10 @@ async def finish_war(war_id: str) -> None:
                 "territory": seized or war.get("territory"),
                 "replayId": war.get("replay_id"),
                 "relicDrop": drop_info,
+                "forfeit": bool(war.get("forfeit")),
+                "forfeitByYou": bool(war.get("forfeit")) and war.get("forfeit_side") == you_are,
+                "early": (not war.get("forfeit")) and (war["home_score"] >= 2 or war["away_score"] >= 2)
+                    and (war["home_score"] + war["away_score"] < 3),
             })
 
     # Tell spectators the war ended, then clear
@@ -1650,6 +1656,7 @@ async def finish_war(war_id: str) -> None:
         "playerBoard": board["playerBoard"],
         "history": board["history"],
         "territories": board["territories"],
+        "forfeit": bool(war.get("forfeit")),
     })
     war.get("spectators", set()).clear()
 
@@ -1664,7 +1671,7 @@ async def finish_war(war_id: str) -> None:
 
 # --- websocket handler ---
 
-async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
+async def handle_message(ws: ServerConnection, raw: str) -> None:
     msg = json.loads(raw)
     mtype = msg.get("type")
     pid = ws_to_player.get(ws)
@@ -2138,7 +2145,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         await handle_war_action(war_id, gid, action)
 
 
-async def ws_handler(ws: WebSocketServerProtocol) -> None:
+async def ws_handler(ws: ServerConnection) -> None:
     try:
         async for raw in ws:
             await handle_message(ws, raw)

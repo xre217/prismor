@@ -50,7 +50,7 @@ python3 -m http.server 8080         # terminal 2
 
 - Match another house when both are queued
 - Wait ~4s alone → a **rival house** appears (may be the hidden System — never labeled)
-- Draft 3 fighters from your house pool, best-of-3 duels
+- Draft 3 fighters from your house pool, then fight **first to 2** duel wins (up to 3)
 
 ## Hidden System
 

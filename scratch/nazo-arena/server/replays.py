@@ -1,4 +1,4 @@
-"""War replay payloads — finished best-of-3 archives."""
+"""War replay payloads — finished first-to-2 (best-of-3) archives."""
 
 from __future__ import annotations
 

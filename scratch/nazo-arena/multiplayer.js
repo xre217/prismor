@@ -1184,8 +1184,8 @@
     const yourScore = mp.youAre === "away" ? msg.awayScore : msg.homeScore;
     const theirScore = mp.youAre === "away" ? msg.homeScore : msg.awayScore;
     $("tier-label").textContent = msg.spectator
-      ? `Spectating · Duel ${msg.duelIndex} / 3`
-      : `Duel ${msg.duelIndex} / 3`;
+      ? `Spectating · Duel ${msg.duelIndex} · first to 2`
+      : `Duel ${msg.duelIndex} · first to 2`;
     $("score-label").textContent = msg.spectator
       ? `${yourScore} — ${theirScore}`
       : `You ${yourScore} — ${theirScore} Them`;
@@ -1364,7 +1364,9 @@
       ? `${msg.yourScore} — ${msg.theirScore}`
       : `You ${msg.yourScore} — ${msg.theirScore} Them`;
     setTurnBanner(
-      msg.won ? `Duel ${msg.duelIndex} won` : `Duel ${msg.duelIndex} lost`,
+      msg.won
+        ? (msg.yourScore >= 2 ? `War point — ${msg.yourScore}–${msg.theirScore}` : `Duel ${msg.duelIndex} won`)
+        : `Duel ${msg.duelIndex} lost`,
       msg.won ? "yours" : "wait"
     );
     log(
@@ -1402,8 +1404,10 @@
     const their = msg.theirScore ?? (mp.youAre === "away" ? msg.homeScore : msg.awayScore);
     if (wasSpec) {
       $("result-art").textContent = "👁";
-      $("result-title").textContent = "War Complete";
-      let body = `Final score ${msg.homeScore ?? your}–${msg.awayScore ?? their}.`;
+      $("result-title").textContent = msg.forfeit ? "War Forfeit" : "War Complete";
+      let body = msg.forfeit
+        ? `A side disconnected. Final score ${msg.homeScore ?? your}–${msg.awayScore ?? their}.`
+        : `Final score ${msg.homeScore ?? your}–${msg.awayScore ?? their}.`;
       if (msg.replayId) body += " Open Replays in the guild hall to re-watch.";
       $("result-body").textContent = body;
       $("btn-replay").classList.add("hidden");
@@ -1413,17 +1417,43 @@
         $("btn-replay").classList.remove("hidden");
         $("btn-replay").onclick = () => send("replay.get", { replayId: msg.replayId });
       }
-      setStatus("Spectated war ended");
+      setStatus(msg.forfeit ? "Spectated war ended (forfeit)" : "Spectated war ended");
       showScreen("screen-result");
       return;
     }
-    const oppName = msg.opponent.house || msg.opponent.name;
+    const oppName = (msg.opponent && (msg.opponent.house || msg.opponent.name)) || "Rival";
+    if (msg.forfeit) {
+      $("result-art").textContent = msg.won ? "🏳" : "📡";
+      $("result-title").textContent = msg.forfeitByYou
+        ? "War Abandoned"
+        : (msg.won ? "Opponent Disconnected" : "Connection Lost");
+      if (window.NazoJuice) window.NazoJuice.play(msg.won ? "win" : "lose");
+      let body = msg.forfeitByYou
+        ? `You left the war. Recorded as a loss (${your}–${their}). Reconnect and queue again anytime.`
+        : (msg.won
+          ? `${oppName} disconnected. You take the forfeit win ${your}–${their}. ELO ${msg.guild?.elo ?? "—"}.`
+          : `Connection dropped mid-war. Recorded ${your}–${their}. ELO ${msg.guild?.elo ?? "—"}.`);
+      if (msg.replayId) body += " Replay saved.";
+      mp.contestTerritoryId = null;
+      $("result-body").textContent = body;
+      $("btn-replay").classList.add("hidden");
+      $("btn-result-guild").classList.remove("hidden");
+      if (msg.replayId) {
+        $("btn-replay").textContent = "Watch Replay";
+        $("btn-replay").classList.remove("hidden");
+        $("btn-replay").onclick = () => send("replay.get", { replayId: msg.replayId });
+      }
+      setStatus(msg.won ? "Forfeit victory" : "War forfeited");
+      showScreen("screen-result");
+      return;
+    }
     $("result-art").textContent = msg.won ? "🏆" : "💀";
     $("result-title").textContent = msg.won ? "Guild Victory" : "Guild Defeat";
     if (window.NazoJuice) window.NazoJuice.play(msg.won ? "win" : "lose");
     let body = msg.won
       ? `Your guild beat ${oppName} ${your}–${their}. ELO ${msg.guild.elo}.`
       : `${oppName} took it ${their}–${your}. ELO ${msg.guild.elo}.`;
+    if (msg.early) body += " (first to 2)";
     if (msg.relicDrop) {
       body += ` Relic unlocked: ${msg.relicDrop.icon} ${msg.relicDrop.name}.`;
     }
