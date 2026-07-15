@@ -12,6 +12,7 @@
     <header>
       <h1>NAZO ARENA</h1>
       <p class="subtitle">謎の箱 · pull fighters · wreck the bracket</p>
+      <button id="btn-mute" class="btn ghost mute-btn" type="button" aria-pressed="false">🔊 Sound on</button>
     </header>
 
     <section id="screen-title" class="screen active">
@@ -19,6 +20,7 @@
       <p class="tagline">Solo campaign or guild wars. Rivals look real — always.</p>
       <button id="btn-start" class="btn primary">Solo — Open the Box</button>
       <button id="btn-mp" class="btn primary alt">Guild Wars — Multiplayer</button>
+      <p class="title-hint muted">Server required for guild wars · <code>python3 server/server.py</code></p>
       <button id="btn-how" class="btn ghost">How it works</button>
     </section>
 
@@ -27,10 +29,10 @@
       <ul class="rules">
         <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
-        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
-        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply. Online allies form alliance bonds and can Assist once per duel.</li>
+        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen. Sound + hit juice (mute in the header).</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
-        <li><strong>Progress</strong> — wars and duels build fighter mastery (Adept → Legend), which boosts stats in guild wars.</li>
+        <li><strong>Progress</strong> — seasons, relics, territories, daily quests, raids, war replays, fighter mastery, and captain boards save across sessions.</li>
       </ul>
       <button id="btn-how-back" class="btn ghost">Back</button>
     </section>
@@ -56,15 +58,66 @@
     <section id="screen-guild" class="screen">
       <h2>Guild Hall</h2>
       <p id="guild-status" class="mp-status ok">Online</p>
-      <div id="player-stats"></div>
+      <div id="season-banner" class="season-banner"></div>
       <div id="guild-panel"></div>
-      <div id="standings-panel" class="standings-panel"></div>
-      <div class="guild-actions">
+      <div class="guild-actions sticky-actions">
         <button id="btn-war-queue" class="btn primary" disabled>Queue House War</button>
         <button id="btn-war-cancel" class="btn ghost hidden">Cancel Queue</button>
+        <p id="queue-hint" class="queue-hint muted">Optional: open Map tab, pick a region, then queue.</p>
+      </div>
+      <div class="hall-tabs" id="hall-tabs">
+        <button type="button" class="hall-tab active" data-hall="progress">Progress</button>
+        <button type="button" class="hall-tab" data-hall="map">Map</button>
+        <button type="button" class="hall-tab" data-hall="boards">Boards</button>
+        <button type="button" class="hall-tab" data-hall="wars">Wars</button>
+      </div>
+      <div id="hall-progress" class="hall-pane active">
+        <div id="player-stats"></div>
+        <div id="quest-panel" class="quest-panel"></div>
+        <div id="raid-panel" class="raid-panel"></div>
+        <div id="relic-panel" class="relic-panel"></div>
+      </div>
+      <div id="hall-map" class="hall-pane">
+        <div id="territory-panel" class="territory-panel"></div>
+      </div>
+      <div id="hall-boards" class="hall-pane">
+        <div id="standings-panel" class="standings-panel"></div>
+      </div>
+      <div id="hall-wars" class="hall-pane">
+        <div id="replay-panel" class="replay-panel"></div>
       </div>
       <button id="btn-leave-house" class="btn ghost">Leave House</button>
       <button id="btn-guild-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- War replay viewer -->
+    <section id="screen-replay" class="screen">
+      <h2>War Replay</h2>
+      <p id="replay-header" class="muted">—</p>
+      <div id="replay-draft" class="replay-draft"></div>
+      <div class="replay-duel-tabs" id="replay-duel-tabs"></div>
+      <div class="replay-fighters">
+        <div id="replay-home-card" class="replay-card"></div>
+        <div id="replay-score" class="replay-score">0 — 0</div>
+        <div id="replay-away-card" class="replay-card"></div>
+      </div>
+      <div id="replay-log" class="log replay-log"></div>
+      <div class="replay-controls">
+        <button id="btn-replay-prev" class="btn ghost">◀ Prev</button>
+        <button id="btn-replay-play" class="btn primary">Play</button>
+        <button id="btn-replay-next" class="btn ghost">Next ▶</button>
+      </div>
+      <button id="btn-replay-back" class="btn ghost">Back to Guild Hall</button>
+    </section>
+
+    <!-- Raid pick (seasonal boss) -->
+    <section id="screen-raid-pick" class="screen">
+      <h2>Season Raid</h2>
+      <p id="raid-boss-banner" class="raid-boss-banner">—</p>
+      <p id="raid-pick-status" class="muted">Pick 3 house fighters for the gauntlet.</p>
+      <div id="raid-pick-pool" class="draft-pool"></div>
+      <div id="raid-pick-roster" class="roster"></div>
+      <button id="btn-raid-abort" class="btn ghost">Abort Raid</button>
     </section>
 
     <!-- War opponent intro (looks like a real guild) -->
@@ -75,6 +128,7 @@
         <div id="opp-name" class="opp-name">—</div>
         <div id="opp-tag" class="opp-tag">[----]</div>
         <div id="opp-elo" class="guild-meta">—</div>
+        <div id="opp-territory" class="opp-territory hidden"></div>
         <div id="opp-members" class="member-chips"></div>
         <p id="opp-motd" class="motd"></p>
       </div>
@@ -122,13 +176,17 @@
         <span id="tier-label">Tier 1</span>
         <span id="score-label">Wins: 0</span>
       </div>
+      <p id="turn-banner" class="turn-banner hidden">Your turn</p>
       <p id="battle-passive" class="battle-passive hidden"></p>
+      <p id="battle-alliance" class="battle-alliance hidden"></p>
       <p id="battle-mastery" class="battle-mastery hidden"></p>
+      <p id="battle-relic" class="battle-relic hidden"></p>
       <p id="battle-intel" class="battle-intel hidden"></p>
       <div class="arena">
         <div class="fighter-panel player-side">
           <div id="player-sprite" class="sprite">?</div>
           <div id="player-name" class="fname">—</div>
+          <div id="player-statuses" class="status-row"></div>
           <div class="hp-bar"><div id="player-hp" class="hp-fill"></div></div>
           <div id="player-hp-text" class="hp-text">100 / 100</div>
         </div>
@@ -136,6 +194,7 @@
         <div class="fighter-panel enemy-side">
           <div id="enemy-sprite" class="sprite">?</div>
           <div id="enemy-name" class="fname">—</div>
+          <div id="enemy-statuses" class="status-row"></div>
           <div class="hp-bar"><div id="enemy-hp" class="hp-fill enemy"></div></div>
           <div id="enemy-hp-text" class="hp-text">100 / 100</div>
         </div>
@@ -147,6 +206,7 @@
         <button class="btn action" data-action="skill">✦ Skill</button>
         <button class="btn action" data-action="chaos">☠ Chaos</button>
       </div>
+      <button id="btn-war-assist" class="btn primary alt hidden" type="button">🤝 Alliance Assist (+8 HP)</button>
       <div id="swap-bar" class="swap hidden">
         <p>Fighter down! Send the next one:</p>
         <div id="swap-options" class="card-row small"></div>
@@ -163,6 +223,7 @@
   </div>
   <script src="data.js"></script>
   <script src="factions.js"></script>
+  <script src="juice.js"></script>
   <script src="game.js"></script>
   <script src="multiplayer.js"></script>
 </body>

@@ -35,6 +35,7 @@ function log(msg, cls = "system") {
   line.textContent = msg;
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
+  if (window.NazoJuice) window.NazoJuice.reactLog(msg, cls);
 }
 
 function statLine(s) {
@@ -85,6 +86,7 @@ function nextPull() {
     container.appendChild(renderFighterCard(base, (f) => {
       state.roster.push(cloneFighter(f));
       state.pullIndex++;
+      if (window.NazoJuice) window.NazoJuice.play("pick");
       if (state.pullIndex >= 3) finishDraft();
       else nextPull();
     }));
@@ -165,6 +167,10 @@ function setActionsEnabled(on) {
 }
 
 function animateHit(side) {
+  if (window.NazoJuice) {
+    window.NazoJuice.hit(side);
+    return;
+  }
   const el = side === "player" ? $("player-sprite") : $("enemy-sprite");
   el.classList.remove("hit");
   void el.offsetWidth;
@@ -172,6 +178,10 @@ function animateHit(side) {
 }
 
 function animateAttack(side) {
+  if (window.NazoJuice) {
+    window.NazoJuice.attack(side);
+    return;
+  }
   const el = side === "player" ? $("player-sprite") : $("enemy-sprite");
   el.classList.remove("attack");
   void el.offsetWidth;
@@ -183,8 +193,10 @@ function applyDamage(target, amount, sourceName, side) {
     if (state.flags.dodge) {
       state.flags.dodge = false;
       log(`${state.active.name} phases through!`, "player");
-      state.enemyHp -= calcDamage(state.active, state.enemy, 0.8);
+      const counter = calcDamage(state.active, state.enemy, 0.8);
+      state.enemyHp -= counter;
       animateHit("enemy");
+      if (window.NazoJuice) window.NazoJuice.floatText("enemy", `-${counter}`, "dmg");
       updateBattleUI();
       return;
     }
@@ -193,16 +205,28 @@ function applyDamage(target, amount, sourceName, side) {
       state.enemyHp -= reflected;
       log(`Reflect ${reflected}!`, "crit");
       state.flags.reflect = 0;
+      if (window.NazoJuice) window.NazoJuice.floatText("enemy", `-${reflected}`, "crit");
     }
     state.playerHp -= amount;
     log(`${sourceName} hits for ${amount}`, "enemy");
     animateHit("player");
+    if (window.NazoJuice) window.NazoJuice.floatText("player", `-${amount}`, "dmg");
   } else {
     let dmg = amount;
-    if (state.flags.foresight) { dmg *= 2; state.flags.foresight = false; log("Foresight ×2!", "crit"); }
+    let crit = false;
+    if (state.flags.foresight) {
+      dmg *= 2;
+      state.flags.foresight = false;
+      log("Foresight ×2!", "crit");
+      crit = true;
+    }
     state.enemyHp -= dmg;
     log(`${sourceName} deals ${dmg}`, "player");
-    animateHit("enemy");
+    if (window.NazoJuice) {
+      window.NazoJuice.hit("enemy", { amount: dmg, crit });
+    } else {
+      animateHit("enemy");
+    }
   }
   updateBattleUI();
 }
@@ -319,6 +343,7 @@ function checkBattleEnd() {
     state.wins++;
     state.active.currentHp = state.playerHp;
     log(`✦ ${state.enemy.name} down!`, "crit");
+    if (window.NazoJuice) window.NazoJuice.play(state.tier >= 8 ? "win" : "crit");
     if (state.tier >= 8) setTimeout(() => endGame(true), 800);
     else { state.tier++; setTimeout(() => startBattle(), 1200); }
     return true;
@@ -326,6 +351,7 @@ function checkBattleEnd() {
   if (state.playerHp <= 0) {
     setActionsEnabled(false);
     state.active.alive = false;
+    if (window.NazoJuice) window.NazoJuice.play("hit");
     if (state.bench.filter((f) => f.alive).length) showSwap();
     else setTimeout(() => endGame(false), 800);
     return true;
@@ -366,6 +392,7 @@ function onSoloAction(action) {
 
 function endGame(won) {
   state.gameOver = true;
+  if (window.NazoJuice) window.NazoJuice.play(won ? "win" : "lose");
   $("result-art").textContent = won ? "🏆" : "📦";
   $("result-title").textContent = won ? "Arena Cleared" : "Box Closed";
   $("result-body").textContent = won
@@ -376,6 +403,8 @@ function endGame(won) {
   $("battle-passive").classList.add("hidden");
   const bm = $("battle-mastery");
   if (bm) bm.classList.add("hidden");
+  const br = $("battle-relic");
+  if (br) br.classList.add("hidden");
   $("battle-intel").classList.add("hidden");
   showScreen("screen-result");
 }
@@ -387,6 +416,12 @@ $("btn-replay").addEventListener("click", () => showScreen("screen-title"));
 
 document.querySelectorAll("#action-bar .btn.action").forEach((btn) => {
   btn.addEventListener("click", () => {
+    if (window.NazoJuice) {
+      const a = btn.dataset.action;
+      if (a === "guard") window.NazoJuice.play("guard");
+      else if (a === "chaos") window.NazoJuice.play("chaos");
+      else window.NazoJuice.play("ui");
+    }
     if (state.mode === "solo") onSoloAction(btn.dataset.action);
     else if (window.NazoMP) window.NazoMP.sendAction(btn.dataset.action);
   });

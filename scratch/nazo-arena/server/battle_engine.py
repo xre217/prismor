@@ -28,12 +28,16 @@ def roll(luck: int) -> float:
     return random.random() * 10 + luck * 0.5
 
 
-def calc_damage(attacker: dict, defender_stats: dict, guarding: bool, mult: float = 1, ignore_shield: float = 0) -> int:
+def calc_damage(
+    attacker: dict,
+    defender_stats: dict,
+    guarding: bool,
+    mult: float = 1,
+    ignore_shield: float = 0,
+    shield_factor: float = 1.0,
+) -> int:
     atk = attacker["stats"]["power"] + roll(attacker["stats"]["luck"]) * 0.3
-    shield = defender_stats["shield"] * (1.5 if guarding else 1) * (1 - ignore_shield)
-    spd = defender_stats.get("_speed", defender_stats.get("speed", 0))
-    if "speed" in defender_stats:
-        spd = defender_stats["speed"]
+    shield = defender_stats["shield"] * (1.5 if guarding else 1) * (1 - ignore_shield) * shield_factor
     atk_spd = attacker["stats"]["speed"]
     dmg = (atk - shield * 0.4 + atk_spd * 0.2) * mult
     return max(3, int(dmg))
@@ -51,19 +55,30 @@ class DuelState:
     reflect: int = 0
     dodge: bool = False
     deep_scan: bool = False
+    enemy_deep_scan: bool = False
     log: list = field(default_factory=list)
     home_faction: str | None = None
     away_faction: str | None = None
     last_home_action: str | None = None
     last_away_action: str | None = None
+    player_statuses: list = field(default_factory=list)
+    enemy_statuses: list = field(default_factory=list)
+    home_relic: str | None = None
+    away_relic: str | None = None
+    home_territory: dict | None = None
+    away_territory: dict | None = None
+    home_alliance: dict | None = None
+    away_alliance: dict | None = None
 
     def snapshot(self) -> dict:
+        from status_effects import statuses_public
         return {
             "playerHp": self.player_hp,
             "enemyHp": self.enemy_hp,
             "playerMax": self.player["maxHp"],
             "enemyMax": self.enemy["maxHp"],
             "guarding": {"player": self.guarding_player, "enemy": self.guarding_enemy},
+            "statuses": statuses_public(self),
         }
 
     def add_log(self, msg: str, cls: str = "system") -> dict:
@@ -72,11 +87,81 @@ class DuelState:
         return entry
 
 
+def _hit_damage(state: DuelState, attacker: dict, is_attacker_player: bool, mult: float = 1, ignore_shield: float = 0) -> int:
+    from status_effects import focus_mult, shield_mult
+    from relics import relic_damage_mult
+    from territories import territory_damage_mult
+    from alliances import alliance_damage_mult
+
+    if is_attacker_player:
+        defender_stats = state.enemy["stats"]
+        guarding = state.guarding_enemy
+        relic_id = state.home_relic
+        terr = state.home_territory
+        ally = state.home_alliance
+    else:
+        defender_stats = state.player["stats"]
+        guarding = state.guarding_player
+        relic_id = state.away_relic
+        terr = state.away_territory
+        ally = state.away_alliance
+    sf = shield_mult(state, not is_attacker_player)
+    dmg = calc_damage(attacker, defender_stats, guarding, mult, ignore_shield, shield_factor=sf)
+    dmg = max(
+        3,
+        int(
+            dmg
+            * focus_mult(state, is_attacker_player)
+            * relic_damage_mult(relic_id)
+            * territory_damage_mult(terr)
+            * alliance_damage_mult(ally)
+        ),
+    )
+    return dmg
+
+
+def _relic_id_for(state: DuelState, is_player: bool) -> str | None:
+    return state.home_relic if is_player else state.away_relic
+
+
+def _apply_relic_guard(state: DuelState, is_player: bool, entries: list) -> None:
+    from relics import effects_for
+    from status_effects import apply_status, cleanse
+
+    eff = effects_for(_relic_id_for(state, is_player))
+    if eff.get("guard_cleanse"):
+        cleanse(state, is_player, entries, count=1)
+    if eff.get("guard_regen"):
+        apply_status(state, "regen", is_player, 1, entries, source="Relic")
+
+
+def _maybe_strike_burn(state: DuelState, is_player: bool, entries: list) -> None:
+    from relics import effects_for
+    from status_effects import apply_status
+
+    chance = float(effects_for(_relic_id_for(state, is_player)).get("strike_burn_chance", 0))
+    terr = state.home_territory if is_player else state.away_territory
+    if terr:
+        chance += float(terr.get("strike_burn_chance", 0) or 0)
+    if chance and random.random() < chance:
+        source = "Territory" if terr and terr.get("strike_burn_chance") else "Relic"
+        apply_status(state, "burn", not is_player, 2, entries, source=source)
+
+
 def ai_choose_action(state: DuelState, is_enemy: bool) -> str:
     """Pick action for AI-controlled fighter."""
+    from status_effects import has_status
+
+    for_player = not is_enemy
+    if has_status(state, "stun", for_player):
+        return "guard"  # will be skipped by stun tick anyway
     hp_self = state.enemy_hp if is_enemy else state.player_hp
     hp_opp = state.player_hp if is_enemy else state.enemy_hp
     r = random.random()
+    if has_status(state, "focus", for_player) and r < 0.55:
+        return "strike"
+    if has_status(state, "burn", for_player) and hp_self < 40 and r < 0.35:
+        return "guard"
     if hp_opp < 30 and r < 0.35:
         return "strike"
     if hp_self < 25 and r < 0.4:
@@ -99,10 +184,22 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
         record_action,
         try_slytherin_chaos_steal,
     )
+    from status_effects import (
+        apply_status,
+        maybe_consume_focus,
+        tick_start_of_turn,
+    )
 
     entries: list[dict] = []
     self_f = state.player if is_player_turn else state.enemy
     name = self_f["name"]
+
+    # Start-of-turn ticks (burn/regen/stun)
+    if tick_start_of_turn(state, is_player_turn, entries):
+        record_action(state, "stun", is_player_turn)
+        return entries
+    if duel_winner(state):
+        return entries
 
     if is_player_turn:
         state.guarding_player = False
@@ -116,23 +213,24 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
             state.guarding_enemy = True
         entries.append(state.add_log(f"{name} guards.", "player" if is_player_turn else "enemy"))
         apply_hufflepuff_guard_heal(state, is_player_turn, entries)
+        _apply_relic_guard(state, is_player_turn, entries)
         record_action(state, action, is_player_turn)
         return entries
 
     if action == "strike":
-        ignore = 0.5 if (is_player_turn and state.deep_scan) else 0
+        ignore = 0.0
         if is_player_turn and state.deep_scan:
+            ignore = 0.5
             state.deep_scan = False
-        if is_player_turn:
-            defender_stats = state.enemy["stats"]
-            guarding = state.guarding_enemy
-        else:
-            defender_stats = state.player["stats"]
-            guarding = state.guarding_player
-        dmg = calc_damage(self_f, defender_stats, guarding, 1, ignore)
+        elif not is_player_turn and state.enemy_deep_scan:
+            ignore = 0.5
+            state.enemy_deep_scan = False
+        dmg = _hit_damage(state, self_f, is_player_turn, 1, ignore)
+        maybe_consume_focus(state, is_player_turn, entries)
         if gryffindor_damage_mult(state, is_player_turn) > 1.0:
             passive_log_for_action(state, is_player_turn, entries)
         entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
+        _maybe_strike_burn(state, is_player_turn, entries)
         record_action(state, action, is_player_turn)
         return entries
 
@@ -145,8 +243,8 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
     if action == "chaos":
         outcome = random.random()
         if outcome < 0.4:
-            tgt_stats = state.enemy["stats"] if is_player_turn else state.player["stats"]
-            dmg = calc_damage(self_f, tgt_stats, False, 1.8)
+            dmg = _hit_damage(state, self_f, is_player_turn, 1.8, 0)
+            maybe_consume_focus(state, is_player_turn, entries)
             if gryffindor_damage_mult(state, is_player_turn) > 1.0:
                 passive_log_for_action(state, is_player_turn, entries)
             if try_slytherin_chaos_steal(state, is_player_turn, entries):
@@ -158,8 +256,15 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
                     entries.append(state.add_log(f"Stolen chaos hits them for {dmg}!", "player"))
             else:
                 entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
+                from relics import effects_for
+                relic_id = state.home_relic if is_player_turn else state.away_relic
+                eff = effects_for(relic_id)
+                terr = state.home_territory if is_player_turn else state.away_territory
+                burn_chance = 0.60 if terr and terr.get("chaos_burn_boost") else 0.40
+                if eff.get("chaos_burn_always") or random.random() < burn_chance:
+                    apply_status(state, "burn", not is_player_turn, 2, entries, source="Chaos")
         elif outcome < 0.7:
-            d = random.randint(8, 22)
+            d = random.randint(6, 18)
             if is_player_turn:
                 state.player_hp -= d
                 entries.append(state.add_log(f"Chaos backfire! {d} self-damage", "enemy"))
@@ -176,16 +281,18 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
 
 def _apply_damage(state: DuelState, target: str, amount: int, source: str, from_player: bool) -> list[dict]:
     from house_passives import gryffindor_damage_mult
+    from status_effects import apply_status
+
     if target == "enemy":
         amount = max(3, int(amount * gryffindor_damage_mult(state, True)))
     else:
         amount = max(3, int(amount * gryffindor_damage_mult(state, False)))
-    entries = []
+    entries: list[dict] = []
     if target == "player":
         if state.dodge:
             state.dodge = False
             entries.append(state.add_log(f"{state.player['name']} dodges!", "player"))
-            counter = calc_damage(state.player, state.enemy["stats"], state.guarding_enemy, 0.8)
+            counter = _hit_damage(state, state.player, True, 0.8)
             state.enemy_hp -= counter
             entries.append(state.add_log(f"Counter hits for {counter}!", "player"))
             return entries
@@ -194,6 +301,8 @@ def _apply_damage(state: DuelState, target: str, amount: int, source: str, from_
             state.enemy_hp -= ref
             entries.append(state.add_log(f"Reflect! {ref} damage back!", "crit"))
             state.reflect = 0
+            if random.random() < 0.25:
+                apply_status(state, "stun", False, 1, entries, source="Reflect")
         dmg = amount
         state.player_hp -= dmg
         entries.append(state.add_log(f"{source} hits for {dmg}", "enemy"))
@@ -209,52 +318,77 @@ def _apply_damage(state: DuelState, target: str, amount: int, source: str, from_
 
 
 def _run_skill(state: DuelState, self_f: dict, is_player: bool) -> list[dict]:
+    from status_effects import apply_status, cleanse, maybe_consume_focus
+
     skill = self_f.get("skill", "")
     entries: list[dict] = []
 
     if skill == "Foresight":
         if is_player:
             state.foresight = True
+            apply_status(state, "focus", True, 1, entries, source="Foresight")
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1.2)
+            dmg = _hit_damage(state, self_f, False, 1.2)
+            maybe_consume_focus(state, False, entries)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
     elif skill == "Overclock":
         for _ in range(2):
-            stats = state.enemy["stats"] if is_player else state.player["stats"]
-            guard = state.guarding_enemy if is_player else state.guarding_player
-            dmg = calc_damage(self_f, stats, guard, 0.65)
+            dmg = _hit_damage(state, self_f, is_player, 0.65)
             entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+            if random.random() < 0.22:
+                apply_status(state, "burn", not is_player, 2, entries, source="Overclock")
+        maybe_consume_focus(state, is_player, entries)
     elif skill in ("Constitution", "Bulwark"):
         if is_player:
             state.player_hp = min(state.player["maxHp"], state.player_hp + 15)
             state.guarding_player = True
             entries.append(state.add_log("Bulwark: +15 HP", "player"))
+            cleanse(state, True, entries, count=1)
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
-            entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+            state.enemy_hp = min(state.enemy["maxHp"], state.enemy_hp + 15)
+            state.guarding_enemy = True
+            entries.append(state.add_log("Bulwark: +15 HP", "enemy"))
+            cleanse(state, False, entries, count=1)
     elif skill == "Reflect":
         if is_player:
             state.reflect = 1
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
+            # Away Reflect still sets a one-shot reflect via stun chance on next hit — deal damage + chance stun
+            dmg = _hit_damage(state, self_f, False, 1)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+            if random.random() < 0.30:
+                apply_status(state, "stun", True, 1, entries, source="Reflect")
     elif skill == "Fade":
         if is_player:
             state.dodge = True
+            cleanse(state, True, entries, count=1)
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1.1)
+            dmg = _hit_damage(state, self_f, False, 1.1)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
     elif skill in ("Deep Scan", "Precision"):
+        apply_status(state, "focus", is_player, 1, entries, source=skill)
+        if skill == "Deep Scan":
+            apply_status(state, "weaken", not is_player, 2, entries, source="Deep Scan")
         if is_player:
             state.deep_scan = True
         else:
-            dmg = calc_damage(self_f, state.player["stats"], False, 0.9)
-            entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+            state.enemy_deep_scan = True
     elif skill == "Wild Card":
         if random.random() < 0.5:
             stats = {"power": 10, "speed": 8, "mind": 5, "shield": 0, "luck": 10}
-            dmg = calc_damage(self_f, stats, False, 1.5)
+            from status_effects import shield_mult, focus_mult
+            sf = shield_mult(state, not is_player)
+            dmg = calc_damage(self_f, stats, False, 1.5, shield_factor=sf)
+            dmg = max(3, int(dmg * focus_mult(state, is_player)))
+            maybe_consume_focus(state, is_player, entries)
             entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+            roll_s = random.random()
+            if roll_s < 0.35:
+                apply_status(state, "burn", not is_player, 2, entries, source="Wild Card")
+            elif roll_s < 0.55:
+                apply_status(state, "weaken", not is_player, 2, entries, source="Wild Card")
+            elif roll_s < 0.70:
+                apply_status(state, "stun", not is_player, 1, entries, source="Wild Card")
         else:
             d = 12
             if is_player:
@@ -265,36 +399,39 @@ def _run_skill(state: DuelState, self_f: dict, is_player: bool) -> list[dict]:
                 entries.append(state.add_log(f"Enemy fumbles for {d}!", "player"))
     elif skill == "Split":
         for _ in range(3):
-            stats = state.enemy["stats"] if is_player else state.player["stats"]
-            guard = state.guarding_enemy if is_player else state.guarding_player
-            dmg = calc_damage(self_f, stats, guard, 0.4)
+            dmg = _hit_damage(state, self_f, is_player, 0.4)
             if random.random() < self_f["stats"]["luck"] * 0.08:
                 dmg *= 2
                 entries.append(state.add_log("Micro-crit!", "crit"))
             entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+            if random.random() < 0.18:
+                apply_status(state, "burn", not is_player, 2, entries, source="Split")
+        maybe_consume_focus(state, is_player, entries)
     elif skill == "Balance":
         if is_player:
             state.player_hp = min(state.player["maxHp"], state.player_hp + 10)
             entries.append(state.add_log("Balance: +10 HP", "player"))
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
-            entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+            state.enemy_hp = min(state.enemy["maxHp"], state.enemy_hp + 10)
+            entries.append(state.add_log("Balance: +10 HP", "enemy"))
+        apply_status(state, "regen", is_player, 2, entries, source="Balance")
     elif skill == "Phase":
-        stats = state.enemy["stats"] if is_player else state.player["stats"]
-        guard = state.guarding_enemy if is_player else state.guarding_player
-        dmg = calc_damage(self_f, stats, guard, 1.2, 0.5)
+        dmg = _hit_damage(state, self_f, is_player, 1.2, 0.5)
+        maybe_consume_focus(state, is_player, entries)
         entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+        apply_status(state, "weaken", not is_player, 2, entries, source="Phase")
     elif skill == "Bloom":
         if is_player:
             state.player_hp = min(state.player["maxHp"], state.player_hp + 20)
             entries.append(state.add_log("Bloom: +20 HP", "player"))
         else:
-            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 0.8)
-            entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+            state.enemy_hp = min(state.enemy["maxHp"], state.enemy_hp + 20)
+            entries.append(state.add_log("Bloom: +20 HP", "enemy"))
+        apply_status(state, "regen", is_player, 2, entries, source="Bloom")
+        cleanse(state, is_player, entries, count=1)
     else:
-        stats = state.enemy["stats"] if is_player else state.player["stats"]
-        guard = state.guarding_enemy if is_player else state.guarding_player
-        dmg = calc_damage(self_f, stats, guard, 1.2)
+        dmg = _hit_damage(state, self_f, is_player, 1.2)
+        maybe_consume_focus(state, is_player, entries)
         entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
 
     return entries
