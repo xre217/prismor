@@ -371,6 +371,10 @@ function endGame(won) {
   $("result-body").textContent = won
     ? `8 tiers cleared. ${state.wins} wins.`
     : `Fell at tier ${state.tier}. Pull again.`;
+  $("btn-replay").classList.remove("hidden");
+  $("btn-result-guild").classList.add("hidden");
+  $("battle-passive").classList.add("hidden");
+  $("battle-intel").classList.add("hidden");
   showScreen("screen-result");
 }
 

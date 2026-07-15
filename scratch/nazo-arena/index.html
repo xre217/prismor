@@ -25,11 +25,12 @@
     <section id="screen-how" class="screen">
       <h2>Rules</h2>
       <ul class="rules">
-        <li><strong>Solo</strong> — draft 3 fighters, survive 8 arena tiers.</li>
+        <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
-        <li><strong>Guild Wars</strong> — pick a house, queue for war, best-of-3 duels vs rival houses.</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue for war, draft from your house pool, best-of-3 duels. House passives apply.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
+        <li><strong>Progress</strong> — wars, ELO, and fighter mastery save across sessions.</li>
       </ul>
       <button id="btn-how-back" class="btn ghost">Back</button>
     </section>
@@ -54,6 +55,7 @@
     <!-- Guild hall -->
     <section id="screen-guild" class="screen">
       <h2>Guild Hall</h2>
+      <p id="guild-status" class="mp-status ok">Online</p>
       <div id="player-stats"></div>
       <div id="guild-panel"></div>
       <div id="standings-panel" class="standings-panel"></div>

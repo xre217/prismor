@@ -572,6 +572,28 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
 .standings-row .elo { color: var(--accent2); }
 .standings-row .record, .standings-row .members { color: var(--muted); }
 
+.fighter-card { position: relative; }
+.mastery-badge {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  font-size: 0.55rem;
+  color: var(--gold);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.35rem;
+}
+
+@media (max-width: 519px) {
+  .standings-row {
+    grid-template-columns: 2rem 1.5rem 1fr auto;
+    grid-template-rows: auto auto;
+  }
+  .standings-row .record { grid-column: 3; }
+  .standings-row .members { grid-column: 4; }
+  .standings-row .elo { grid-column: 4; grid-row: 1; }
+}
+
 @media (min-width: 520px) {
   .house-grid { grid-template-columns: 1fr 1fr; }
   .card-row:not(.small) { flex-direction: row; }

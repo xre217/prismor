@@ -33,11 +33,13 @@
   }
 
   function setStatus(text, ok = true) {
-    const el = $("mp-status");
-    if (el) {
-      el.textContent = text;
-      el.className = ok ? "mp-status ok" : "mp-status err";
-    }
+    ["mp-status", "guild-status"].forEach((id) => {
+      const el = $(id);
+      if (el) {
+        el.textContent = text;
+        el.className = ok ? "mp-status ok" : "mp-status err";
+      }
+    });
   }
 
   function connect() {
@@ -45,7 +47,14 @@
       mp.ws = new WebSocket(WS_URL);
       mp.ws.onopen = () => { mp.connected = true; resolve(); };
       mp.ws.onerror = () => reject(new Error("Cannot reach arena server"));
-      mp.ws.onclose = () => { mp.connected = false; setStatus("Disconnected", false); };
+      mp.ws.onclose = () => {
+        mp.connected = false;
+        setStatus("Disconnected — reconnect from login", false);
+        const q = $("btn-war-queue");
+        const c = $("btn-war-cancel");
+        if (q) q.disabled = false;
+        if (c) c.classList.add("hidden");
+      };
       mp.ws.onmessage = (ev) => handleMessage(JSON.parse(ev.data));
     });
   }
@@ -61,7 +70,7 @@
         mp.standings = msg.standings || [];
         mp.factions = msg.factions || Object.values(window.NazoData.FACTIONS || {});
         if (msg.token) localStorage.setItem("nazo-arena-token", msg.token);
-        if (msg.restored) setStatus("Welcome back");
+        setStatus(msg.restored ? "Welcome back · Online" : "Online");
         if (mp.guild) {
           applyHouseTheme(mp.guild.factionId);
           renderGuildHall();
@@ -77,6 +86,7 @@
         if (msg.stats) mp.stats = msg.stats;
         if (msg.standings) mp.standings = msg.standings;
         if (mp.guild) applyHouseTheme(mp.guild.factionId);
+        else applyHouseTheme(null);
         renderGuildHall();
         if (mp.guild) showScreen("screen-guild");
         break;
@@ -99,6 +109,7 @@
         mp.opponent = msg.opponent;
         mp.pickBuffer = [];
         mp.warDraftIndex = 0;
+        setStatus("War matched");
         showOpponentIntro(msg.opponent);
         break;
       case "war.pick.status":
@@ -109,6 +120,9 @@
         break;
       case "war.duel.update":
         onDuelUpdate(msg);
+        break;
+      case "war.duel.end":
+        onDuelEnd(msg);
         break;
       case "war.end":
         if (msg.stats) mp.stats = msg.stats;
@@ -160,8 +174,9 @@
 
   function renderStandings() {
     const el = $("standings-panel");
-    if (!el || !mp.standings.length) {
-      if (el) el.innerHTML = "";
+    if (!el) return;
+    if (!mp.standings.length) {
+      el.innerHTML = `<h3>House Standings</h3><p class="muted">No wars recorded yet.</p>`;
       return;
     }
     el.innerHTML = `
@@ -181,24 +196,31 @@
     `;
   }
 
+  function masteryXp(fighterId) {
+    const m = (mp.stats?.mastery || []).find((x) => x.fighter_id === fighterId);
+    return m ? m.xp : 0;
+  }
+
   function renderPlayerStats() {
     const el = $("player-stats");
     if (!el) return;
     const s = mp.stats;
     if (!s) {
-      el.innerHTML = "";
+      el.innerHTML = `<div class="player-stats"><div class="stat-line muted">Stats unlock after your first connect.</div></div>`;
       return;
     }
     const mastery = (s.mastery || []).slice(0, 4).map((m) => {
       const f = (window.NazoData.ALL_FIGHTERS || []).find((x) => x.id === m.fighter_id);
       const name = f ? f.name : m.fighter_id;
-      return `<span class="mastery-chip">${name} · ${m.xp} XP</span>`;
+      return `<span class="mastery-chip">${name} · ${m.xp} XP · ${m.wins}W/${m.losses}L</span>`;
     }).join("");
     el.innerHTML = `
       <div class="player-stats">
         <div class="stat-line"><strong>${s.nickname || mp.nickname}</strong></div>
         <div class="stat-line">Wars ${s.warsWon}W ${s.warsLost}L · Duels ${s.duelsWon}W ${s.duelsLost}L</div>
-        ${mastery ? `<div class="mastery-row">${mastery}</div>` : ""}
+        ${mastery
+          ? `<div class="mastery-row">${mastery}</div>`
+          : `<div class="stat-line muted">No fighter mastery yet — draft a war roster.</div>`}
       </div>
     `;
   }
@@ -268,8 +290,15 @@
     container.innerHTML = "";
     const factionId = mp.guild?.factionId || mp.guild?.id?.replace("faction-", "");
     const pool = factionId ? fightersForFaction(factionId) : (window.NazoData.ALL_FIGHTERS || ARCHETYPES);
-    randomPick(pool, 3).forEach((base) => {
-      container.appendChild(renderFighterCard(base, (f) => {
+    // Soft bias: high-mastery fighters appear slightly more often
+    const weighted = [];
+    pool.forEach((f) => {
+      const xp = masteryXp(f.id);
+      const copies = 1 + Math.min(2, Math.floor(xp / 24));
+      for (let i = 0; i < copies; i++) weighted.push(f);
+    });
+    randomPick(weighted.length ? weighted : pool, 3).forEach((base) => {
+      const card = renderFighterCard(base, (f) => {
         mp.pickBuffer.push(f.id);
         mp.warRoster.push(cloneFighter(f));
         mp.warDraftIndex++;
@@ -278,7 +307,15 @@
           $("war-pick-wait").classList.remove("hidden");
           $("war-draft-options").innerHTML = `<p class="muted">Roster submitted. Waiting for ${mp.opponent.name}...</p>`;
         } else warDraftPull();
-      }));
+      });
+      const xp = masteryXp(base.id);
+      if (xp > 0) {
+        const badge = document.createElement("div");
+        badge.className = "mastery-badge";
+        badge.textContent = `${xp} XP`;
+        card.appendChild(badge);
+      }
+      container.appendChild(card);
     });
   }
 
@@ -310,8 +347,10 @@
     mp.theirFighter = msg.theirFighter;
     mp.yourTurn = msg.yourTurn === true;
 
+    const yourScore = mp.youAre === "away" ? msg.awayScore : msg.homeScore;
+    const theirScore = mp.youAre === "away" ? msg.homeScore : msg.awayScore;
     $("tier-label").textContent = `Duel ${msg.duelIndex} / 3`;
-    $("score-label").textContent = `Score ${msg.homeScore} — ${msg.awayScore}`;
+    $("score-label").textContent = `You ${yourScore} — ${theirScore} Them`;
 
     window.NazoSolo.state.active = mp.yourFighter;
     window.NazoSolo.state.enemy = mp.theirFighter;
@@ -361,6 +400,17 @@
     }
   }
 
+  function onDuelEnd(msg) {
+    setWarActions(false);
+    $("score-label").textContent = `You ${msg.yourScore} — ${msg.theirScore} Them`;
+    log(
+      msg.won
+        ? `✦ Duel ${msg.duelIndex} won! Score ${msg.yourScore}–${msg.theirScore}`
+        : `☠ Duel ${msg.duelIndex} lost. Score ${msg.yourScore}–${msg.theirScore}`,
+      msg.won ? "crit" : "enemy"
+    );
+  }
+
   function sendAction(action) {
     if (!mp.yourTurn || !mp.warId) return;
     setWarActions(false);
@@ -371,15 +421,26 @@
     $("btn-war-queue").disabled = false;
     $("btn-war-cancel").classList.add("hidden");
     mp.guild = msg.guild;
+    mp.warId = null;
     renderGuildHall();
+    const your = msg.yourScore ?? (mp.youAre === "away" ? msg.awayScore : msg.homeScore);
+    const their = msg.theirScore ?? (mp.youAre === "away" ? msg.homeScore : msg.awayScore);
+    const oppName = msg.opponent.house || msg.opponent.name;
     $("result-art").textContent = msg.won ? "🏆" : "💀";
     $("result-title").textContent = msg.won ? "Guild Victory" : "Guild Defeat";
     $("result-body").textContent = msg.won
-      ? `Your guild beat ${msg.opponent.name} ${msg.homeScore}–${msg.awayScore}. ELO ${msg.guild.elo}.`
-      : `${msg.opponent.name} took it ${msg.awayScore}–${msg.homeScore}. ELO ${msg.guild.elo}.`;
+      ? `Your guild beat ${oppName} ${your}–${their}. ELO ${msg.guild.elo}.`
+      : `${oppName} took it ${their}–${your}. ELO ${msg.guild.elo}.`;
     $("btn-replay").classList.add("hidden");
     $("btn-result-guild").classList.remove("hidden");
+    setStatus(msg.won ? "Victory recorded" : "Defeat recorded");
     showScreen("screen-result");
+  }
+
+  function cancelQueueAndLeaveHall() {
+    if (mp.connected) send("war.unqueue");
+    $("btn-war-queue").disabled = false;
+    $("btn-war-cancel").classList.add("hidden");
   }
 
   // Wire UI
@@ -387,8 +448,12 @@
   $("btn-login-back").addEventListener("click", () => showScreen("screen-title"));
   $("btn-houses-back").addEventListener("click", () => showScreen("screen-title"));
   $("btn-login").addEventListener("click", login);
-  $("btn-guild-back").addEventListener("click", () => showScreen("screen-title"));
+  $("btn-guild-back").addEventListener("click", () => {
+    cancelQueueAndLeaveHall();
+    showScreen("screen-title");
+  });
   $("btn-leave-house").addEventListener("click", () => {
+    cancelQueueAndLeaveHall();
     send("guild.leave");
     applyHouseTheme(null);
     renderHouseSelect();

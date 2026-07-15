@@ -172,6 +172,9 @@ def leave_guild(player_id: str, *, persist: bool = True) -> None:
     if not gid or gid not in guilds:
         return
     g = guilds[gid]
+    if gid in queue:
+        queue.remove(gid)
+        g["queued"] = False
     if g.get("is_faction"):
         g["player_ids"] = [x for x in g["player_ids"] if x != player_id]
         g["members"] = [m for m in g["members"] if m.get("playerId") != player_id]
@@ -179,6 +182,72 @@ def leave_guild(player_id: str, *, persist: bool = True) -> None:
             store.set_player_faction(player_id, None)
     players[player_id]["guild_id"] = None
     players[player_id]["faction_id"] = None
+
+
+def find_war_for_guild(gid: str) -> str | None:
+    for war_id, war in wars.items():
+        if war["phase"] == "done":
+            continue
+        if gid in (war["home_id"], war["away_id"]):
+            return war_id
+    return None
+
+
+def online_member_ids(gid: str) -> list[str]:
+    g = guilds.get(gid, {})
+    out = []
+    for pid in g.get("player_ids", []):
+        p = players.get(pid)
+        if p and p.get("ws"):
+            out.append(pid)
+    return out
+
+
+async def forfeit_war(war_id: str, forfeiting_gid: str) -> None:
+    """End a war because the human side abandoned it."""
+    war = wars.get(war_id)
+    if not war or war["phase"] == "done":
+        return
+    if forfeiting_gid == war["home_id"]:
+        war["away_score"] = max(war["away_score"], 2)
+        war["home_score"] = min(war["home_score"], 1)
+    else:
+        war["home_score"] = max(war["home_score"], 2)
+        war["away_score"] = min(war["away_score"], 1)
+    await finish_war(war_id)
+
+
+async def handle_player_disconnect(pid: str) -> None:
+    """Clear queue membership; forfeit war if no humans left on that side."""
+    p = players.get(pid)
+    if not p:
+        return
+    gid = p.get("guild_id")
+    players[pid]["ws"] = None
+    if not gid or gid not in guilds:
+        return
+
+    g = guilds[gid]
+    if gid in queue:
+        queue.remove(gid)
+        g["queued"] = False
+
+    war_id = find_war_for_guild(gid)
+    remaining = [x for x in online_member_ids(gid) if x != pid]
+
+    if war_id and not remaining:
+        # Keep pid in player_ids so finish_war records their loss
+        await forfeit_war(war_id, gid)
+
+    if g.get("is_faction"):
+        g["player_ids"] = [x for x in g["player_ids"] if x != pid]
+        g["members"] = [m for m in g["members"] if m.get("playerId") != pid]
+
+    players[pid]["guild_id"] = None
+
+    if not online_member_ids(gid) and not find_war_for_guild(gid):
+        g["in_war"] = False
+        g["queued"] = False
 
 
 def create_guild(player_id: str, name: str, tag: str) -> dict:
@@ -227,7 +296,12 @@ async def matchmaking_tick() -> None:
         now = asyncio.get_event_loop().time()
 
         # human vs human — different houses only
-        available = [gid for gid in queue if gid in guilds and guilds[gid].get("is_faction")]
+        available = [
+            gid for gid in queue
+            if gid in guilds
+            and guilds[gid].get("is_faction")
+            and online_member_ids(gid)
+        ]
         by_faction: dict[str, list[str]] = {}
         for gid in available:
             fid = guilds[gid].get("faction_id")
@@ -251,6 +325,11 @@ async def matchmaking_tick() -> None:
         for gid in list(queue):
             g = guilds.get(gid)
             if not g or not g.get("is_faction"):
+                continue
+            if not online_member_ids(gid):
+                if gid in queue:
+                    queue.remove(gid)
+                g["queued"] = False
                 continue
             waited = now - g.get("queued_at", now)
             if waited >= MATCH_WAIT_SEC:
@@ -346,6 +425,11 @@ async def pick_timeout(war_id: str) -> None:
             else:
                 from factions import FACTION_ORDER
                 war[f"{side}_picks"] = pick_ids_for_faction(random.choice(FACTION_ORDER), 3)
+            # Attribute auto-pick mastery to an online member when possible
+            if not g.get("is_system") and not war.get(f"{side}_picker_pid"):
+                members = online_member_ids(war[f"{side}_id"])
+                if members:
+                    war[f"{side}_picker_pid"] = members[0]
     await maybe_start_duels(war_id)
 
 
@@ -483,9 +567,21 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
     if winner:
         if winner == "player":
             war["home_score"] += 1
+            home_duel_won = True
         else:
             war["away_score"] += 1
-        await asyncio.sleep(1.0)
+            home_duel_won = False
+
+        for side, won in (("home", home_duel_won), ("away", not home_duel_won)):
+            gid = war[f"{side}_id"]
+            g = guilds.get(gid, {})
+            if g.get("is_system"):
+                continue
+            for pid in g.get("player_ids", []):
+                store.record_player_duel(pid, won)
+
+        await broadcast_duel_end(war_id, home_duel_won)
+        await asyncio.sleep(1.2)
         war["duel_index"] += 1
         war["duel"] = None
         if war["duel_index"] >= 3:
@@ -493,6 +589,26 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
         else:
             await start_duel(war_id)
         return
+
+
+async def broadcast_duel_end(war_id: str, home_won: bool) -> None:
+    war = wars[war_id]
+    for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
+        g = guilds[gid]
+        if g.get("is_system"):
+            continue
+        won = home_won if you_are == "home" else not home_won
+        for pid in g["player_ids"]:
+            await send_player(pid, {
+                "type": "war.duel.end",
+                "warId": war_id,
+                "won": won,
+                "homeScore": war["home_score"],
+                "awayScore": war["away_score"],
+                "yourScore": war["home_score"] if you_are == "home" else war["away_score"],
+                "theirScore": war["away_score"] if you_are == "home" else war["home_score"],
+                "duelIndex": war["duel_index"] + 1,
+            })
 
 
 async def broadcast_duel_update(war_id: str, new_log: list) -> None:
@@ -509,6 +625,7 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
             state = d.snapshot()
             your_turn = war["turn"] == "home"
             your_faction = d.home_faction
+            log_entries = new_log
         else:
             state = {
                 "playerHp": d.enemy_hp,
@@ -519,6 +636,14 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
             }
             your_turn = war["turn"] == "away"
             your_faction = d.away_faction
+            log_entries = []
+            for e in new_log:
+                cls = e.get("cls", "system")
+                if cls == "player":
+                    cls = "enemy"
+                elif cls == "enemy":
+                    cls = "player"
+                log_entries.append({**e, "cls": cls})
 
         intel = ravenclaw_intel(d, you_are == "home")
         passive = PASSIVES.get(your_faction or "", {})
@@ -527,7 +652,7 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
             await send_player(pid, {
                 "type": "war.duel.update",
                 "warId": war_id,
-                "log": new_log,
+                "log": log_entries,
                 "state": state,
                 "yourTurn": your_turn,
                 "opponentThinking": not your_turn,
@@ -603,12 +728,17 @@ async def finish_war(war_id: str) -> None:
         opp = away if you_are == "home" else home
         for pid in g["player_ids"]:
             stats = store.player_public(pid)
+            your_score = war["home_score"] if you_are == "home" else war["away_score"]
+            their_score = war["away_score"] if you_are == "home" else war["home_score"]
             await send_player(pid, {
                 "type": "war.end",
                 "warId": war_id,
                 "won": won,
+                "youAre": you_are,
                 "homeScore": war["home_score"],
                 "awayScore": war["away_score"],
+                "yourScore": your_score,
+                "theirScore": their_score,
                 "guild": public_guild_profile(g),
                 "opponent": public_guild_profile(opp),
                 "stats": stats,
@@ -733,6 +863,10 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         return
 
     if mtype == "guild.leave":
+        gid = players[pid].get("guild_id")
+        if gid and gid in queue:
+            queue.remove(gid)
+            guilds[gid]["queued"] = False
         leave_guild(pid, persist=True)
         await ws.send(_json({
             "type": "guild.updated",
@@ -750,8 +884,14 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         g = guilds[gid]
         if g.get("is_system"):
             return
+        # Clear stale in_war if no active war exists
+        if g.get("in_war") and not find_war_for_guild(gid):
+            g["in_war"] = False
         if g.get("in_war"):
             await ws.send(_json({"type": "error", "message": "Already in a war"}))
+            return
+        if not online_member_ids(gid) and pid not in g.get("player_ids", []):
+            await ws.send(_json({"type": "error", "message": "Rejoin your house first"}))
             return
         g["queued"] = True
         g["queued_at"] = asyncio.get_event_loop().time()
@@ -810,13 +950,7 @@ async def ws_handler(ws: WebSocketServerProtocol) -> None:
     finally:
         pid = ws_to_player.pop(ws, None)
         if pid and pid in players:
-            gid = players[pid].get("guild_id")
-            if gid and gid in guilds:
-                g = guilds[gid]
-                if g.get("is_faction"):
-                    g["player_ids"] = [x for x in g["player_ids"] if x != pid]
-                    g["members"] = [m for m in g["members"] if m.get("playerId") != pid]
-            players[pid]["ws"] = None
+            await handle_player_disconnect(pid)
 
 
 async def main() -> None:

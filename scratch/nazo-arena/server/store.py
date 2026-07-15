@@ -117,6 +117,14 @@ class ArenaStore:
         )
         self.conn.commit()
 
+    def record_player_duel(self, pid: str, won: bool) -> None:
+        col = "duels_won" if won else "duels_lost"
+        self.conn.execute(
+            f"UPDATE players SET {col} = {col} + 1, last_seen = ? WHERE id = ?",
+            (_now(), pid),
+        )
+        self.conn.commit()
+
     def add_mastery(self, pid: str, fighter_id: str, xp: int, won: bool) -> None:
         col = "wins" if won else "losses"
         self.conn.execute(
