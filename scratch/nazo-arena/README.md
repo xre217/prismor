@@ -1,74 +1,49 @@
 # Nazo Arena
 
-Browser roguelite battler with **guild wars multiplayer**. Rivals look like real guilds — member lists, captains, ELO. Some of them aren't what they seem (the server never tells).
+Browser roguelite battler with **four house guilds** and hidden System opponents.
+
+## The four houses
+
+| House | Lab | Fighters |
+|-------|-----|----------|
+| **Gryffindor** | Anthropic | Claude Opus, Sonnet, Haiku, Safety Rail |
+| **Ravenclaw** | xAI | Grok 4, Truth Seeker, Meme Lord, X Signal |
+| **Hufflepuff** | OpenAI | GPT-4o, o1 Reasoner, Codex, DALL·E Dream |
+| **Slytherin** | The Rest | DeepSeek R1, Gemini Ultra, Mistral, Llama Horde, Command R+ |
 
 ## Play solo
-
-Open `index.html` or:
 
 ```bash
 cd scratch/nazo-arena
 python3 -m http.server 8080
-# → http://localhost:8080
 ```
 
 ## Play multiplayer
 
-Terminal 1 — arena server:
-
 ```bash
-cd scratch/nazo-arena
 pip install -r requirements.txt
-python3 server/server.py
-# ws://localhost:8765
+python3 server/server.py          # terminal 1 — ws://localhost:8765
+python3 -m http.server 8080         # terminal 2
 ```
 
-Terminal 2 — static files:
+**Guild Wars → Connect → Choose your house → Queue House War**
 
-```bash
-cd scratch/nazo-arena
-python3 -m http.server 8080
-```
+- Match another house when both are queued
+- Wait ~4s alone → a **rival house** appears (may be the hidden System — never labeled)
+- Draft 3 fighters from your house pool, best-of-3 duels
 
-Then **Guild Wars → Connect → Create guild → Queue Guild War**.
+## Hidden System
 
-Open a second browser tab/window to test human-vs-human, or queue alone and a "rival guild" appears after ~4 seconds.
-
-## Guild war flow
-
-1. Pick a callsign and connect
-2. Create or join a guild (share invite code)
-3. Queue for war — matchmaking finds another guild or fills with an opponent that looks human
-4. Draft 3 fighters (same mystery pulls as solo)
-5. Best-of-3 duels — turn-based Strike / Guard / Skill / Chaos
-6. ELO updates; back to guild hall
-
-## The hidden layer
-
-Server-side only (`server/system_guilds.py`):
-
-- Synthetic guilds with believable names, tags, member rosters, and "last seen" timestamps
-- Captains lock rosters after human-like delays
-- Turns use think-time jitter before acting
-- **Clients never receive `is_system`** — opponents always look like player guilds
-
-Real human guilds can match each other when two are queued.
+When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
 ## Layout
 
 ```
 scratch/nazo-arena/
-├── index.html       # UI
-├── data.js          # Fighter archetypes
-├── game.js          # Solo campaign
-├── multiplayer.js   # Guild client
-├── server/
-│   ├── server.py           # WebSocket + matchmaking
-│   ├── battle_engine.py    # Server-side duels
-│   └── system_guilds.py    # Hidden opponent profiles
-└── requirements.txt
+├── factions.js          # House data + fighters (client)
+├── server/factions.py   # Same four houses (server)
+├── server/server.py     # WebSocket + matchmaking
+└── ...
 ```
 
-## Fighters
-
-12 archetypes — The Oracle, The Spark, The Titan, The Mirror, The Nomad, The Diver, The Jester, The Atom, The Sage, The Wraith, The Forge, The Lotus. Pure fiction.
+Pure fiction / parody. Not affiliated with HP, Anthropic, OpenAI, xAI, or anyone else.

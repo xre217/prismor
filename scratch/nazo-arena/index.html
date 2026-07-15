@@ -26,7 +26,8 @@
       <h2>Rules</h2>
       <ul class="rules">
         <li><strong>Solo</strong> — draft 3 fighters, survive 8 arena tiers.</li>
-        <li><strong>Guild Wars</strong> — create/join a guild, queue for war, best-of-3 duels.</li>
+        <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue for war, best-of-3 duels vs rival houses.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
       </ul>
@@ -42,25 +43,23 @@
       <button id="btn-login-back" class="btn ghost">Back</button>
     </section>
 
+    <!-- House selection -->
+    <section id="screen-houses" class="screen">
+      <h2>Choose Your House</h2>
+      <p class="muted">Four guilds. One war. Rivals never know who's really online.</p>
+      <div id="house-grid" class="house-grid"></div>
+      <button id="btn-houses-back" class="btn ghost">Back</button>
+    </section>
+
     <!-- Guild hall -->
     <section id="screen-guild" class="screen">
       <h2>Guild Hall</h2>
       <div id="guild-panel"></div>
       <div class="guild-actions">
-        <button id="btn-war-queue" class="btn primary" disabled>Queue Guild War</button>
+        <button id="btn-war-queue" class="btn primary" disabled>Queue House War</button>
         <button id="btn-war-cancel" class="btn ghost hidden">Cancel Queue</button>
       </div>
-      <details class="guild-form">
-        <summary>Create guild</summary>
-        <label class="field">Name<input id="input-gname" type="text" maxlength="32" placeholder="Northwind Collective" /></label>
-        <label class="field">Tag<input id="input-gtag" type="text" maxlength="6" placeholder="NWND" /></label>
-        <button id="btn-create-guild" class="btn">Create</button>
-      </details>
-      <details class="guild-form">
-        <summary>Join with invite</summary>
-        <label class="field">Code<input id="input-invite" type="text" maxlength="6" placeholder="ABC123" /></label>
-        <button id="btn-join-guild" class="btn">Join</button>
-      </details>
+      <button id="btn-leave-house" class="btn ghost">Leave House</button>
       <button id="btn-guild-back" class="btn ghost">Back</button>
     </section>
 
@@ -137,6 +136,7 @@
     </section>
   </div>
   <script src="data.js"></script>
+  <script src="factions.js"></script>
   <script src="game.js"></script>
   <script src="multiplayer.js"></script>
 </body>

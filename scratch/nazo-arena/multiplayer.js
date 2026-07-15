@@ -2,7 +2,7 @@
 
 (function () {
   const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname}:8765`;
-  const { ARCHETYPES, cloneFighter, randomPick, byId } = window.NazoData;
+  const { ARCHETYPES, cloneFighter, randomPick, fightersForFaction, FACTIONS } = window.NazoData;
   const { showScreen, renderFighterCard, log, $ } = window.NazoSolo;
 
   const mp = {
@@ -21,6 +21,7 @@
     theirFighter: null,
     yourTurn: false,
     connected: false,
+    factions: [],
   };
 
   function send(type, payload = {}) {
@@ -52,13 +53,22 @@
         mp.playerId = msg.playerId;
         mp.nickname = msg.nickname;
         mp.guild = msg.guild;
-        renderGuildHall();
-        showScreen("screen-guild");
+        mp.factions = msg.factions || Object.values(window.NazoData.FACTIONS || {});
+        if (mp.guild) {
+          applyHouseTheme(mp.guild.factionId);
+          renderGuildHall();
+          showScreen("screen-guild");
+        } else {
+          renderHouseSelect();
+          showScreen("screen-houses");
+        }
         break;
       case "guild.updated":
         mp.guild = msg.guild;
         if (msg.inviteCode) mp.inviteCode = msg.inviteCode;
+        if (mp.guild) applyHouseTheme(mp.guild.factionId);
         renderGuildHall();
+        if (mp.guild) showScreen("screen-guild");
         break;
       case "error":
         setStatus(msg.message, false);
@@ -98,7 +108,7 @@
 
   function showOpponentIntro(opp) {
     $("opp-crest").textContent = opp.crest;
-    $("opp-name").textContent = opp.name;
+    $("opp-name").textContent = opp.house ? `${opp.house} · ${opp.lab || ""}` : opp.name;
     $("opp-tag").textContent = `[${opp.tag}]`;
     $("opp-elo").textContent = `ELO ${opp.elo} · ${opp.wins}W ${opp.losses}L`;
     const members = opp.members.slice(0, 6).map((m) =>
@@ -109,25 +119,53 @@
     showScreen("screen-war-intro");
   }
 
+  function applyHouseTheme(factionId) {
+    document.body.className = factionId ? `house-${factionId}` : "";
+  }
+
+  function renderHouseSelect() {
+    const el = $("house-grid");
+    if (!el) return;
+    el.innerHTML = "";
+    const list = mp.factions.length ? mp.factions : Object.values(FACTIONS || {});
+    list.forEach((fac) => {
+      const card = document.createElement("div");
+      card.className = `house-card house-${fac.id}`;
+      card.innerHTML = `
+        <div class="house-crest">${fac.crest}</div>
+        <div class="house-name">${fac.house}</div>
+        <div class="house-lab">${fac.lab}</div>
+        <div class="house-motto">${fac.motd || ""}</div>
+        <div class="house-roster">${(fac.fighters || []).join(" · ")}</div>
+      `;
+      card.addEventListener("click", () => {
+        send("guild.join_faction", { factionId: fac.id });
+      });
+      el.appendChild(card);
+    });
+  }
+
   function renderGuildHall() {
     const g = mp.guild;
     if (!g) {
-      $("guild-panel").innerHTML = `<p class="muted">No guild yet — create one or join with an invite code.</p>`;
+      $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
       $("btn-war-queue").disabled = true;
       return;
     }
+    const lab = g.lab || "";
+    const house = g.house || g.name;
     $("guild-panel").innerHTML = `
-      <div class="guild-banner">
+      <div class="guild-banner house-banner">
         <span class="guild-crest">${g.crest}</span>
         <div>
-          <div class="guild-title">${g.name} <span class="tag">[${g.tag}]</span></div>
-          <div class="guild-meta">ELO ${g.elo} · ${g.wins}W ${g.losses}L · ${g.members.length} fighters</div>
+          <div class="guild-title">${house} <span class="tag">[${g.tag}]</span></div>
+          <div class="guild-meta">${lab} · ELO ${g.elo} · ${g.wins}W ${g.losses}L · ${g.members.length} online</div>
+          <div class="guild-meta">${g.motd || ""}</div>
         </div>
       </div>
       <div class="member-list">${g.members.map((m) =>
         `<div class="member-row"><span>${m.name}</span><span class="role">${m.role}</span><span class="seen">${m.lastSeen}</span></div>`
       ).join("")}</div>
-      ${mp.inviteCode ? `<p class="invite">Invite: <code>${mp.inviteCode}</code></p>` : ""}
     `;
     $("btn-war-queue").disabled = false;
   }
@@ -143,17 +181,6 @@
     } catch (e) {
       setStatus(e.message + " — start server: python3 server/server.py", false);
     }
-  }
-
-  function createGuild() {
-    const name = ($("input-gname").value || "My Guild").trim();
-    const tag = ($("input-gtag").value || "").trim();
-    send("guild.create", { name, tag });
-  }
-
-  function joinGuild() {
-    const code = ($("input-invite").value || "").trim();
-    send("guild.join", { inviteCode: code });
   }
 
   function queueWar() {
@@ -177,7 +204,9 @@
     $("war-pull-count").textContent = `${mp.warDraftIndex + 1} / 3`;
     const container = $("war-draft-options");
     container.innerHTML = "";
-    randomPick(ARCHETYPES, 3).forEach((base) => {
+    const factionId = mp.guild?.factionId || mp.guild?.id?.replace("faction-", "");
+    const pool = factionId ? fightersForFaction(factionId) : (window.NazoData.ALL_FIGHTERS || ARCHETYPES);
+    randomPick(pool, 3).forEach((base) => {
       container.appendChild(renderFighterCard(base, (f) => {
         mp.pickBuffer.push(f.id);
         mp.warRoster.push(cloneFighter(f));
@@ -270,10 +299,15 @@
   // Wire UI
   $("btn-mp").addEventListener("click", () => showScreen("screen-login"));
   $("btn-login-back").addEventListener("click", () => showScreen("screen-title"));
+  $("btn-houses-back").addEventListener("click", () => showScreen("screen-title"));
   $("btn-login").addEventListener("click", login);
   $("btn-guild-back").addEventListener("click", () => showScreen("screen-title"));
-  $("btn-create-guild").addEventListener("click", createGuild);
-  $("btn-join-guild").addEventListener("click", joinGuild);
+  $("btn-leave-house").addEventListener("click", () => {
+    send("guild.leave");
+    applyHouseTheme(null);
+    renderHouseSelect();
+    showScreen("screen-houses");
+  });
   $("btn-war-queue").addEventListener("click", queueWar);
   $("btn-war-cancel").addEventListener("click", cancelQueue);
   $("btn-war-intro-go").addEventListener("click", startWarDraft);

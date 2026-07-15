@@ -7,34 +7,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-ARCHETYPES = [
-    {"id": "oracle", "name": "The Oracle", "icon": "🔮", "type": "Seer", "skill": "Foresight",
-     "stats": {"power": 6, "speed": 5, "mind": 9, "shield": 6, "luck": 5}},
-    {"id": "spark", "name": "The Spark", "icon": "⚡", "type": "Blitz", "skill": "Overclock",
-     "stats": {"power": 7, "speed": 10, "mind": 4, "shield": 3, "luck": 6}},
-    {"id": "titan", "name": "The Titan", "icon": "🗿", "type": "Fortress", "skill": "Bulwark",
-     "stats": {"power": 8, "speed": 3, "mind": 5, "shield": 10, "luck": 4}},
-    {"id": "mirror", "name": "The Mirror", "icon": "🪞", "type": "Copycat", "skill": "Reflect",
-     "stats": {"power": 5, "speed": 6, "mind": 8, "shield": 7, "luck": 7}},
-    {"id": "nomad", "name": "The Nomad", "icon": "🏜", "type": "Rogue", "skill": "Fade",
-     "stats": {"power": 6, "speed": 9, "mind": 6, "shield": 4, "luck": 8}},
-    {"id": "diver", "name": "The Diver", "icon": "🤿", "type": "Analyst", "skill": "Deep Scan",
-     "stats": {"power": 7, "speed": 5, "mind": 10, "shield": 5, "luck": 4}},
-    {"id": "jester", "name": "The Jester", "icon": "🃏", "type": "Chaos", "skill": "Wild Card",
-     "stats": {"power": 6, "speed": 7, "mind": 5, "shield": 4, "luck": 10}},
-    {"id": "atom", "name": "The Atom", "icon": "⚛", "type": "Swarm", "skill": "Split",
-     "stats": {"power": 4, "speed": 8, "mind": 7, "shield": 5, "luck": 9}},
-    {"id": "sage", "name": "The Sage", "icon": "📜", "type": "Harmony", "skill": "Balance",
-     "stats": {"power": 6, "speed": 6, "mind": 8, "shield": 8, "luck": 5}},
-    {"id": "wraith", "name": "The Wraith", "icon": "👻", "type": "Phantom", "skill": "Phase",
-     "stats": {"power": 8, "speed": 7, "mind": 6, "shield": 3, "luck": 6}},
-    {"id": "forge", "name": "The Forge", "icon": "🔥", "type": "Berserker", "skill": "Meltdown",
-     "stats": {"power": 10, "speed": 4, "mind": 3, "shield": 6, "luck": 5}},
-    {"id": "lotus", "name": "The Lotus", "icon": "🪷", "type": "Mystic", "skill": "Bloom",
-     "stats": {"power": 4, "speed": 5, "mind": 9, "shield": 7, "luck": 8}},
-]
-
-ARCHETYPE_BY_ID = {a["id"]: a for a in ARCHETYPES}
+from factions import ALL_FIGHTERS, ARCHETYPES, ARCHETYPE_BY_ID  # noqa: E402
 
 
 def clone_fighter(base: dict) -> dict:
@@ -202,22 +175,22 @@ def _apply_damage(state: DuelState, target: str, amount: int, source: str, from_
 
 
 def _run_skill(state: DuelState, self_f: dict, is_player: bool) -> list[dict]:
-    fid = self_f["id"]
+    skill = self_f.get("skill", "")
     entries: list[dict] = []
 
-    if fid == "oracle":
+    if skill == "Foresight":
         if is_player:
             state.foresight = True
         else:
             dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1.2)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
-    elif fid == "spark":
+    elif skill == "Overclock":
         for _ in range(2):
             stats = state.enemy["stats"] if is_player else state.player["stats"]
             guard = state.guarding_enemy if is_player else state.guarding_player
             dmg = calc_damage(self_f, stats, guard, 0.65)
             entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
-    elif fid == "titan":
+    elif skill in ("Constitution", "Bulwark"):
         if is_player:
             state.player_hp = min(state.player["maxHp"], state.player_hp + 15)
             state.guarding_player = True
@@ -225,25 +198,59 @@ def _run_skill(state: DuelState, self_f: dict, is_player: bool) -> list[dict]:
         else:
             dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
-    elif fid == "mirror":
+    elif skill == "Reflect":
         if is_player:
             state.reflect = 1
         else:
             dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
-    elif fid == "nomad":
+    elif skill == "Fade":
         if is_player:
             state.dodge = True
         else:
             dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1.1)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
-    elif fid == "diver":
+    elif skill in ("Deep Scan", "Precision"):
         if is_player:
             state.deep_scan = True
         else:
             dmg = calc_damage(self_f, state.player["stats"], False, 0.9)
             entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
-    elif fid == "lotus":
+    elif skill == "Wild Card":
+        if random.random() < 0.5:
+            stats = {"power": 10, "speed": 8, "mind": 5, "shield": 0, "luck": 10}
+            dmg = calc_damage(self_f, stats, False, 1.5)
+            entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+        else:
+            d = 12
+            if is_player:
+                state.player_hp -= d
+                entries.append(state.add_log(f"Wild Card fumbles for {d}", "enemy"))
+            else:
+                state.enemy_hp -= d
+                entries.append(state.add_log(f"Enemy fumbles for {d}!", "player"))
+    elif skill == "Split":
+        for _ in range(3):
+            stats = state.enemy["stats"] if is_player else state.player["stats"]
+            guard = state.guarding_enemy if is_player else state.guarding_player
+            dmg = calc_damage(self_f, stats, guard, 0.4)
+            if random.random() < self_f["stats"]["luck"] * 0.08:
+                dmg *= 2
+                entries.append(state.add_log("Micro-crit!", "crit"))
+            entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+    elif skill == "Balance":
+        if is_player:
+            state.player_hp = min(state.player["maxHp"], state.player_hp + 10)
+            entries.append(state.add_log("Balance: +10 HP", "player"))
+        else:
+            dmg = calc_damage(self_f, state.player["stats"], state.guarding_player, 1)
+            entries.extend(_apply_damage(state, "player", dmg, self_f["name"], False))
+    elif skill == "Phase":
+        stats = state.enemy["stats"] if is_player else state.player["stats"]
+        guard = state.guarding_enemy if is_player else state.guarding_player
+        dmg = calc_damage(self_f, stats, guard, 1.2, 0.5)
+        entries.extend(_apply_damage(state, "enemy" if is_player else "player", dmg, self_f["name"], is_player))
+    elif skill == "Bloom":
         if is_player:
             state.player_hp = min(state.player["maxHp"], state.player_hp + 20)
             entries.append(state.add_log("Bloom: +20 HP", "player"))

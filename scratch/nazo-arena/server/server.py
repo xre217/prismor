@@ -15,6 +15,7 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from battle_engine import DuelState, ai_choose_action, apply_player_action, duel_winner, fighter_from_id
+from factions import FACTIONS, pick_ids_for_faction, random_opponent_faction
 from system_guilds import (
     pick_ids_from_roster,
     public_guild_profile,
@@ -42,27 +43,51 @@ players: dict[str, dict] = {}  # player_id -> {ws, nickname, guild_id}
 guilds: dict[str, dict] = {}  # guild_id -> guild
 ws_to_player: dict[Any, str] = {}
 queue: list[str] = []  # guild_ids waiting for war
-wars: dict[str, dict] = {}  # war_id -> war state
-system_guild_pool: list[str] = []
+wars: dict[str, dict] = {}
+system_guild_pool: list[str] = []  # unused; kept for compat
 
 
-def init_system_pool(n: int = 6) -> None:
-    for _ in range(n):
-        g = spawn_system_guild()
-        guilds[g["id"]] = g
-        system_guild_pool.append(g["id"])
+def init_faction_guilds() -> None:
+    """Four house guilds — players join one."""
+    for fid, fac in FACTIONS.items():
+        gid = f"faction-{fid}"
+        guilds[gid] = {
+            "id": gid,
+            "name": fac["name"],
+            "tag": fac["tag"],
+            "crest": fac["crest"],
+            "faction_id": fid,
+            "elo": 1000,
+            "wins": 0,
+            "losses": 0,
+            "members": [],
+            "motd": fac.get("motd", ""),
+            "is_system": False,
+            "is_faction": True,
+            "invite_code": None,
+            "player_ids": [],
+            "queued": False,
+            "in_war": False,
+        }
 
 
-def borrow_system_guild(near_elo: int) -> dict:
-    for gid in system_guild_pool:
-        g = guilds[gid]
-        if not g.get("queued") and not g.get("in_war"):
-            g["elo"] = near_elo + random.randint(-80, 80)
-            return g
-    g = spawn_system_guild(near_elo)
-    guilds[g["id"]] = g
-    system_guild_pool.append(g["id"])
-    return g
+def factions_public() -> list[dict]:
+    out = []
+    for fid, fac in FACTIONS.items():
+        g = guilds.get(f"faction-{fid}", {})
+        out.append({
+            "id": fid,
+            "house": fac["house"],
+            "lab": fac["lab"],
+            "name": fac["name"],
+            "tag": fac["tag"],
+            "crest": fac["crest"],
+            "motd": fac.get("motd", ""),
+            "members": len(g.get("player_ids", [])),
+            "elo": g.get("elo", 1000),
+            "fighters": [f["name"] for f in fac["fighters"]],
+        })
+    return out
 
 
 async def send_player(player_id: str, msg: dict) -> None:
@@ -90,6 +115,33 @@ def player_public(pid: str) -> dict | None:
 
 
 # --- guild ops ---
+
+def join_faction(player_id: str, faction_id: str) -> dict | None:
+    if faction_id not in FACTIONS:
+        return None
+    leave_guild(player_id)
+    gid = f"faction-{faction_id}"
+    g = guilds[gid]
+    p = players[player_id]
+    if player_id not in g["player_ids"]:
+        g["player_ids"].append(player_id)
+        g["members"].append({
+            "name": p["nickname"], "role": "fighter", "lastSeen": "online", "playerId": player_id,
+        })
+    p["guild_id"] = gid
+    return g
+
+
+def leave_guild(player_id: str) -> None:
+    gid = players[player_id].get("guild_id")
+    if not gid or gid not in guilds:
+        return
+    g = guilds[gid]
+    if g.get("is_faction"):
+        g["player_ids"] = [x for x in g["player_ids"] if x != player_id]
+        g["members"] = [m for m in g["members"] if m.get("playerId") != player_id]
+    players[player_id]["guild_id"] = None
+
 
 def create_guild(player_id: str, name: str, tag: str) -> dict:
     gid = str(uuid.uuid4())
@@ -136,23 +188,39 @@ async def matchmaking_tick() -> None:
         await asyncio.sleep(1.0)
         now = asyncio.get_event_loop().time()
 
-        # human vs human
-        available = [gid for gid in queue if gid in guilds and not guilds[gid].get("is_system")]
-        while len(available) >= 2:
-            a, b = available.pop(0), available.pop(0)
-            queue.remove(a)
-            queue.remove(b)
-            await start_war(a, b, system_side=None)
+        # human vs human — different houses only
+        available = [gid for gid in queue if gid in guilds and guilds[gid].get("is_faction")]
+        by_faction: dict[str, list[str]] = {}
+        for gid in available:
+            fid = guilds[gid].get("faction_id")
+            if fid:
+                by_faction.setdefault(fid, []).append(gid)
 
-        # human vs system after wait
+        fids = list(by_faction.keys())
+        matched = set()
+        for i, f1 in enumerate(fids):
+            for f2 in fids[i + 1:]:
+                if by_faction[f1] and by_faction[f2]:
+                    a = by_faction[f1].pop(0)
+                    b = by_faction[f2].pop(0)
+                    if a in queue:
+                        queue.remove(a)
+                    if b in queue:
+                        queue.remove(b)
+                    await start_war(a, b, system_side=None)
+
+        # human vs disguised rival house
         for gid in list(queue):
             g = guilds.get(gid)
-            if not g or g.get("is_system"):
+            if not g or not g.get("is_faction"):
                 continue
             waited = now - g.get("queued_at", now)
             if waited >= MATCH_WAIT_SEC:
                 queue.remove(gid)
-                sys_g = borrow_system_guild(g["elo"])
+                home_f = g["faction_id"]
+                opp_f = random_opponent_faction(home_f)
+                sys_g = spawn_system_guild(g["elo"], opp_f)
+                guilds[sys_g["id"]] = sys_g
                 await start_war(gid, sys_g["id"], system_side=sys_g["id"])
 
 
@@ -229,11 +297,15 @@ async def pick_timeout(war_id: str) -> None:
     for side in ("home", "away"):
         if war[f"{side}_picks"] is None:
             g = guilds[war[f"{side}_id"]]
-            if g.get("is_system"):
-                war[f"{side}_picks"] = system_pick_fighter_ids(g)
+            if g.get("is_system") or g.get("is_faction"):
+                fid = g.get("faction_id")
+                if fid:
+                    war[f"{side}_picks"] = pick_ids_for_faction(fid, 3)
+                else:
+                    war[f"{side}_picks"] = system_pick_fighter_ids(g)
             else:
-                from battle_engine import ARCHETYPES
-                war[f"{side}_picks"] = [a["id"] for a in random.sample(ARCHETYPES, 3)]
+                from factions import FACTION_ORDER
+                war[f"{side}_picks"] = pick_ids_for_faction(random.choice(FACTION_ORDER), 3)
     await maybe_start_duels(war_id)
 
 
@@ -450,7 +522,13 @@ async def finish_war(war_id: str) -> None:
                 "opponent": public_guild_profile(opp),
             })
 
+    home_id, away_id = war["home_id"], war["away_id"]
     del wars[war_id]
+
+    for gid in (home_id, away_id):
+        g = guilds.get(gid)
+        if g and g.get("is_system") and not g.get("is_faction"):
+            del guilds[gid]
 
 
 # --- websocket handler ---
@@ -469,11 +547,29 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         gid = players[pid].get("guild_id")
         if gid and gid in guilds:
             guild = public_guild_profile(guilds[gid])
-        await ws.send(_json({"type": "auth.ok", "playerId": pid, "nickname": nickname, "guild": guild}))
+        await ws.send(_json({
+            "type": "auth.ok",
+            "playerId": pid,
+            "nickname": nickname,
+            "guild": guild,
+            "factions": factions_public(),
+        }))
         return
 
     if not pid:
         await ws.send(_json({"type": "error", "message": "Not authenticated"}))
+        return
+
+    if mtype == "guild.join_faction":
+        faction_id = msg.get("factionId", "")
+        g = join_faction(pid, faction_id)
+        if not g:
+            await ws.send(_json({"type": "error", "message": "Unknown house"}))
+            return
+        await ws.send(_json({
+            "type": "guild.updated",
+            "guild": public_guild_profile(g),
+        }))
         return
 
     if mtype == "guild.create":
@@ -500,13 +596,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         return
 
     if mtype == "guild.leave":
-        gid = players[pid].get("guild_id")
-        if gid and gid in guilds:
-            g = guilds[gid]
-            if not g.get("is_system"):
-                g["player_ids"] = [x for x in g["player_ids"] if x != pid]
-                g["members"] = [m for m in g["members"] if m.get("playerId") != pid]
-            players[pid]["guild_id"] = None
+        leave_guild(pid)
         await ws.send(_json({"type": "guild.updated", "guild": None}))
         return
 
@@ -581,7 +671,7 @@ async def ws_handler(ws: WebSocketServerProtocol) -> None:
 
 
 async def main() -> None:
-    init_system_pool()
+    init_faction_guilds()
     asyncio.create_task(matchmaking_tick())
     async with websockets.serve(ws_handler, "0.0.0.0", PORT):
         print(f"Nazo Arena server on ws://0.0.0.0:{PORT}")

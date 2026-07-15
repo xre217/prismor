@@ -77,7 +77,8 @@ function startDraft() {
 
 function nextPull() {
   $("pull-count").textContent = `${state.pullIndex + 1} / 3`;
-  const options = randomPick(ARCHETYPES, 3);
+  const pool = window.NazoData.ALL_FIGHTERS || ARCHETYPES;
+  const options = randomPick(pool, 3);
   const container = $("draft-options");
   container.innerHTML = "";
   options.forEach((base) => {
@@ -256,29 +257,50 @@ function resolveAction(action, isPlayer) {
 }
 
 function runSkill(self, isPlayer) {
-  const id = self.id;
+  const skill = self.skill;
   const s = state;
-  if (id === "oracle") {
+  if (skill === "Foresight") {
     if (isPlayer) s.flags.foresight = true;
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 1.2), self.name, "enemy");
-  } else if (id === "spark") {
+  } else if (skill === "Overclock") {
     for (let i = 0; i < 2; i++) {
       applyDamage(isPlayer ? "enemy" : "player", calcDamage(self, { stats: isPlayer ? s.enemy.stats : s.active.stats, guarding: isPlayer ? s.guarding.enemy : s.guarding.player }, 0.65), self.name, isPlayer ? "player" : "enemy");
     }
-  } else if (id === "titan") {
+  } else if (skill === "Constitution" || skill === "Bulwark") {
     if (isPlayer) { s.playerHp = Math.min(s.maxHp, s.playerHp + 15); s.guarding.player = true; log("Bulwark +15", "player"); }
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 1), self.name, "enemy");
     updateBattleUI();
-  } else if (id === "mirror") {
+  } else if (skill === "Reflect") {
     if (isPlayer) s.flags.reflect = 1;
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 1), self.name, "enemy");
-  } else if (id === "nomad") {
+  } else if (skill === "Fade") {
     if (isPlayer) s.flags.dodge = true;
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 1.1), self.name, "enemy");
-  } else if (id === "diver") {
+  } else if (skill === "Deep Scan" || skill === "Precision") {
     if (isPlayer) s.flags.deepScan = true;
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: false }, 0.9), self.name, "enemy");
-  } else if (id === "lotus") {
+  } else if (skill === "Wild Card") {
+    if (Math.random() < 0.5) {
+      applyDamage(isPlayer ? "enemy" : "player", calcDamage(self, { stats: { power: 10, speed: 8, mind: 5, shield: 0, luck: 10 }, guarding: false }, 1.5), self.name, isPlayer ? "player" : "enemy");
+    } else {
+      const d = 12;
+      if (isPlayer) { s.playerHp -= d; log(`Wild Card fumble ${d}`, "enemy"); }
+      else { s.enemyHp -= d; log(`Fumble ${d}!`, "player"); }
+      updateBattleUI();
+    }
+  } else if (skill === "Split") {
+    for (let i = 0; i < 3; i++) {
+      let dmg = calcDamage(self, { stats: isPlayer ? s.enemy.stats : s.active.stats, guarding: isPlayer ? s.guarding.enemy : s.guarding.player }, 0.4);
+      if (Math.random() < self.stats.luck * 0.08) { dmg *= 2; log("Micro-crit!", "crit"); }
+      applyDamage(isPlayer ? "enemy" : "player", dmg, self.name, isPlayer ? "player" : "enemy");
+    }
+  } else if (skill === "Balance") {
+    if (isPlayer) { s.playerHp = Math.min(s.maxHp, s.playerHp + 10); log("Balance +10", "player"); }
+    else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 1), self.name, "enemy");
+    updateBattleUI();
+  } else if (skill === "Phase") {
+    applyDamage(isPlayer ? "enemy" : "player", calcDamage(self, { stats: isPlayer ? s.enemy.stats : s.active.stats, guarding: isPlayer ? s.guarding.enemy : s.guarding.player }, 1.2, 0.5), self.name, isPlayer ? "player" : "enemy");
+  } else if (skill === "Bloom") {
     if (isPlayer) { s.playerHp = Math.min(s.maxHp, s.playerHp + 20); log("Bloom +20", "player"); }
     else applyDamage("player", calcDamage(self, { stats: s.active.stats, guarding: s.guarding.player }, 0.8), self.name, "enemy");
     updateBattleUI();
