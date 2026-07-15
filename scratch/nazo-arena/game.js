@@ -143,6 +143,10 @@ function startBattle() {
   log(`— Tier ${state.tier}: ${state.active.name} vs ${state.enemy.name} —`);
   setActionsEnabled(true);
   showScreen("screen-battle");
+  const bp = $("battle-passive");
+  const bi = $("battle-intel");
+  if (bp) bp.classList.add("hidden");
+  if (bi) bi.classList.add("hidden");
 }
 
 function updateBattleUI() {

@@ -52,6 +52,10 @@ class DuelState:
     dodge: bool = False
     deep_scan: bool = False
     log: list = field(default_factory=list)
+    home_faction: str | None = None
+    away_faction: str | None = None
+    last_home_action: str | None = None
+    last_away_action: str | None = None
 
     def snapshot(self) -> dict:
         return {
@@ -88,6 +92,14 @@ def ai_choose_action(state: DuelState, is_enemy: bool) -> str:
 
 def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> list[dict]:
     """Resolve one action. is_player_turn=True means home/player-side acts."""
+    from house_passives import (
+        apply_hufflepuff_guard_heal,
+        gryffindor_damage_mult,
+        passive_log_for_action,
+        record_action,
+        try_slytherin_chaos_steal,
+    )
+
     entries: list[dict] = []
     self_f = state.player if is_player_turn else state.enemy
     name = self_f["name"]
@@ -103,6 +115,8 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
         else:
             state.guarding_enemy = True
         entries.append(state.add_log(f"{name} guards.", "player" if is_player_turn else "enemy"))
+        apply_hufflepuff_guard_heal(state, is_player_turn, entries)
+        record_action(state, action, is_player_turn)
         return entries
 
     if action == "strike":
@@ -116,12 +130,16 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
             defender_stats = state.player["stats"]
             guarding = state.guarding_player
         dmg = calc_damage(self_f, defender_stats, guarding, 1, ignore)
+        if gryffindor_damage_mult(state, is_player_turn) > 1.0:
+            passive_log_for_action(state, is_player_turn, entries)
         entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
+        record_action(state, action, is_player_turn)
         return entries
 
     if action == "skill":
         entries.append(state.add_log(f"{name} uses {self_f['skill']}!", "player" if is_player_turn else "enemy"))
         entries.extend(_run_skill(state, self_f, is_player_turn))
+        record_action(state, action, is_player_turn)
         return entries
 
     if action == "chaos":
@@ -129,7 +147,17 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
         if outcome < 0.4:
             tgt_stats = state.enemy["stats"] if is_player_turn else state.player["stats"]
             dmg = calc_damage(self_f, tgt_stats, False, 1.8)
-            entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
+            if gryffindor_damage_mult(state, is_player_turn) > 1.0:
+                passive_log_for_action(state, is_player_turn, entries)
+            if try_slytherin_chaos_steal(state, is_player_turn, entries):
+                if is_player_turn:
+                    state.player_hp = max(0, state.player_hp - dmg)
+                    entries.append(state.add_log(f"Chaos backfires for {dmg}!", "enemy"))
+                else:
+                    state.enemy_hp = max(0, state.enemy_hp - dmg)
+                    entries.append(state.add_log(f"Stolen chaos hits them for {dmg}!", "player"))
+            else:
+                entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
         elif outcome < 0.7:
             d = random.randint(8, 22)
             if is_player_turn:
@@ -140,12 +168,18 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
                 entries.append(state.add_log(f"Enemy chaos implodes for {d}!", "player"))
         else:
             entries.append(state.add_log("Chaos fizzles.", "system"))
+        record_action(state, action, is_player_turn)
         return entries
 
     return entries
 
 
 def _apply_damage(state: DuelState, target: str, amount: int, source: str, from_player: bool) -> list[dict]:
+    from house_passives import gryffindor_damage_mult
+    if target == "enemy":
+        amount = max(3, int(amount * gryffindor_damage_mult(state, True)))
+    else:
+        amount = max(3, int(amount * gryffindor_damage_mult(state, False)))
     entries = []
     if target == "player":
         if state.dodge:

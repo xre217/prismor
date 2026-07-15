@@ -11,6 +11,17 @@ Browser roguelite battler with **four house guilds** and hidden System opponents
 | **Hufflepuff** | OpenAI | GPT-4o, o1 Reasoner, Codex, DALL·E Dream |
 | **Slytherin** | The Rest | DeepSeek R1, Gemini Ultra, Mistral, Llama Horde, Command R+ |
 
+## House passives (guild wars)
+
+| House | Passive | Effect |
+|-------|---------|--------|
+| **Gryffindor** | Courage | +10% damage when your fighter is below 30% HP |
+| **Ravenclaw** | Insight | See opponent's last action each turn |
+| **Hufflepuff** | Dedication | +5 HP when you Guard |
+| **Slytherin** | Cunning | 15% chance to steal a successful Chaos hit |
+
+Passives apply server-side in guild war duels. Your house passive shows above the battle UI.
+
 ## Play solo
 
 ```bash

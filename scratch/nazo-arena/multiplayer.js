@@ -136,6 +136,7 @@
         <div class="house-name">${fac.house}</div>
         <div class="house-lab">${fac.lab}</div>
         <div class="house-motto">${fac.motd || ""}</div>
+        <div class="house-passive-tag">✦ ${fac.passiveName}: ${fac.passiveDesc}</div>
         <div class="house-roster">${(fac.fighters || []).join(" · ")}</div>
       `;
       card.addEventListener("click", () => {
@@ -154,6 +155,7 @@
     }
     const lab = g.lab || "";
     const house = g.house || g.name;
+    const fac = FACTIONS[g.factionId] || {};
     $("guild-panel").innerHTML = `
       <div class="guild-banner house-banner">
         <span class="guild-crest">${g.crest}</span>
@@ -161,6 +163,7 @@
           <div class="guild-title">${house} <span class="tag">[${g.tag}]</span></div>
           <div class="guild-meta">${lab} · ELO ${g.elo} · ${g.wins}W ${g.losses}L · ${g.members.length} online</div>
           <div class="guild-meta">${g.motd || ""}</div>
+          <div class="house-passive-tag">✦ ${fac.passiveName || g.passiveName || "Passive"}: ${fac.passiveDesc || ""}</div>
         </div>
       </div>
       <div class="member-list">${g.members.map((m) =>
@@ -220,6 +223,27 @@
     });
   }
 
+  function showBattlePassive(factionId) {
+    const fac = FACTIONS[factionId] || {};
+    const el = $("battle-passive");
+    if (fac.passiveName) {
+      el.textContent = `House passive — ${fac.passiveName}: ${fac.passiveDesc}`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
+  function showIntel(action) {
+    const el = $("battle-intel");
+    if (!action) {
+      el.classList.add("hidden");
+      return;
+    }
+    el.textContent = `Ravenclaw Insight — opponent last used: ${action}`;
+    el.classList.remove("hidden");
+  }
+
   function startWarDuel(msg) {
     $("war-pick-wait").classList.add("hidden");
     window.NazoSolo.state.mode = "war";
@@ -246,6 +270,8 @@
     $("enemy-name").textContent = mp.theirFighter.name;
     updateWarUI(msg.state);
     log(`— Duel ${msg.duelIndex}: ${mp.yourFighter.name} vs ${mp.theirFighter.name} —`);
+    showBattlePassive(mp.guild?.factionId);
+    showIntel(null);
     setWarActions(!!msg.yourTurn);
     showScreen("screen-battle");
   }
@@ -267,6 +293,7 @@
     updateWarUI(msg.state);
     window.NazoSolo.state.playerHp = msg.state.playerHp;
     window.NazoSolo.state.enemyHp = msg.state.enemyHp;
+    if (msg.opponentLastAction) showIntel(msg.opponentLastAction);
     if (msg.opponentThinking) {
       setWarActions(false);
       log("Opponent is thinking...", "system");

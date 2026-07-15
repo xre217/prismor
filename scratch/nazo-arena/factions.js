@@ -10,6 +10,8 @@ window.NazoData.FACTIONS = {
     color: "#ae0001",
     accent: "#d3a625",
     motto: "Bold reasoning. Constitutional courage.",
+    passiveName: "Courage",
+    passiveDesc: "+10% damage when your fighter is below 30% HP.",
     fighters: [
       { id: "claude-opus", name: "Claude Opus", icon: "🦁", type: "Champion", skill: "Constitution", skillDesc: "Heal 15 HP and guard — safety first.",
         stats: { power: 7, speed: 5, mind: 9, shield: 9, luck: 5 } },
@@ -30,6 +32,8 @@ window.NazoData.FACTIONS = {
     color: "#0e1a40",
     accent: "#946b2d",
     motto: "Truth-seeking wit. Real-time insight.",
+    passiveName: "Insight",
+    passiveDesc: "See the opponent's last action each turn.",
     fighters: [
       { id: "grok-4", name: "Grok 4", icon: "🦅", type: "Oracle", skill: "Foresight", skillDesc: "Next hit deals double damage.",
         stats: { power: 7, speed: 6, mind: 10, shield: 5, luck: 6 } },
@@ -50,6 +54,8 @@ window.NazoData.FACTIONS = {
     color: "#372e29",
     accent: "#ecb939",
     motto: "Reliable workhorses. Ship it.",
+    passiveName: "Dedication",
+    passiveDesc: "Recover 5 HP when you Guard.",
     fighters: [
       { id: "gpt-4o", name: "GPT-4o", icon: "🦡", type: "All-Round", skill: "Balance", skillDesc: "Heal 10 HP.",
         stats: { power: 7, speed: 7, mind: 8, shield: 7, luck: 6 } },
@@ -70,6 +76,8 @@ window.NazoData.FACTIONS = {
     color: "#1a472a",
     accent: "#aaaaaa",
     motto: "Gemini. DeepSeek. Mistral. Whatever wins.",
+    passiveName: "Cunning",
+    passiveDesc: "15% chance to steal a successful Chaos hit.",
     fighters: [
       { id: "deepseek-r1", name: "DeepSeek R1", icon: "🤿", type: "Diver", skill: "Deep Scan", skillDesc: "Pierce guard.",
         stats: { power: 8, speed: 5, mind: 10, shield: 4, luck: 6 } },

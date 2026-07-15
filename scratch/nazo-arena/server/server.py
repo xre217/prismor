@@ -72,9 +72,11 @@ def init_faction_guilds() -> None:
 
 
 def factions_public() -> list[dict]:
+    from house_passives import PASSIVES
     out = []
     for fid, fac in FACTIONS.items():
         g = guilds.get(f"faction-{fid}", {})
+        pas = PASSIVES.get(fid, {})
         out.append({
             "id": fid,
             "house": fac["house"],
@@ -86,6 +88,8 @@ def factions_public() -> list[dict]:
             "members": len(g.get("player_ids", [])),
             "elo": g.get("elo", 1000),
             "fighters": [f["name"] for f in fac["fighters"]],
+            "passiveName": pas.get("name", ""),
+            "passiveDesc": pas.get("desc", ""),
         })
     return out
 
@@ -345,7 +349,11 @@ async def start_duel(war_id: str) -> None:
 
     home_f = pick_ids_from_roster(war["home_picks"])[idx]
     away_f = pick_ids_from_roster(war["away_picks"])[idx]
+    home_g = guilds[war["home_id"]]
+    away_g = guilds[war["away_id"]]
     war["duel"] = DuelState(player=home_f, enemy=away_f)
+    war["duel"].home_faction = home_g.get("faction_id")
+    war["duel"].away_faction = away_g.get("faction_id")
     war["turn"] = "home"
     war["waiting_action"] = False
 
@@ -452,6 +460,8 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
 
 
 async def broadcast_duel_update(war_id: str, new_log: list) -> None:
+    from house_passives import PASSIVES, ravenclaw_intel
+
     war = wars[war_id]
     d = war["duel"]
 
@@ -462,6 +472,7 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
         if you_are == "home":
             state = d.snapshot()
             your_turn = war["turn"] == "home"
+            your_faction = d.home_faction
         else:
             state = {
                 "playerHp": d.enemy_hp,
@@ -471,6 +482,10 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
                 "guarding": {"player": d.guarding_enemy, "enemy": d.guarding_player},
             }
             your_turn = war["turn"] == "away"
+            your_faction = d.away_faction
+
+        intel = ravenclaw_intel(d, you_are == "home")
+        passive = PASSIVES.get(your_faction or "", {})
 
         for pid in g["player_ids"]:
             await send_player(pid, {
@@ -480,6 +495,8 @@ async def broadcast_duel_update(war_id: str, new_log: list) -> None:
                 "state": state,
                 "yourTurn": your_turn,
                 "opponentThinking": not your_turn,
+                "opponentLastAction": intel,
+                "housePassive": passive.get("name"),
             })
 
 

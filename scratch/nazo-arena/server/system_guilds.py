@@ -38,6 +38,10 @@ def public_guild_profile(guild: dict) -> dict:
         prof["factionId"] = fac["id"]
         prof["house"] = fac["house"]
         prof["lab"] = fac["lab"]
+        from house_passives import PASSIVES
+        pas = PASSIVES.get(fac["id"], {})
+        prof["passiveName"] = pas.get("name", "")
+        prof["passiveDesc"] = pas.get("desc", "")
     return prof
 
 

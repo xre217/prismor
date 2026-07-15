@@ -490,6 +490,34 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
 
 .house-banner { border-left: 4px solid var(--house-accent, var(--accent2)); }
 
+.battle-passive {
+  font-size: 0.68rem;
+  color: var(--house-accent, var(--gold));
+  text-align: center;
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.06em;
+}
+
+.battle-intel {
+  font-size: 0.72rem;
+  color: var(--accent2);
+  text-align: center;
+  margin-bottom: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(0, 229, 195, 0.08);
+  border: 1px solid rgba(0, 229, 195, 0.2);
+}
+
+.house-passive-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0.2rem 0.5rem;
+  margin-top: 0.35rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--house-accent, var(--border));
+  color: var(--muted);
+}
+
 @media (min-width: 520px) {
   .house-grid { grid-template-columns: 1fr 1fr; }
   .card-row:not(.small) { flex-direction: row; }
