@@ -56,6 +56,19 @@ python3 -m http.server 8080         # terminal 2
 
 When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
+## Relics
+
+Unlock relics by winning house wars (40% drop chance for a new relic). Equip one at a time in the guild hall.
+
+| Rarity | Examples |
+|--------|----------|
+| Common | Ember Sigil (strike burn), Iron Ward (+HP), Swift Quill (+Speed) |
+| Uncommon | Scout Lens (open Focus), Viper Fang (chaos burn), Glass Heart (guard regen) |
+| Rare | Crown Shard (+Power/Mind), Hourglass (guard cleanse), Ban Seal (first-pick HP) |
+| Legendary | Oracle Coin (+8% damage + open Regen) |
+
+New accounts start with **Iron Ward**. System rivals equip scaled relics by ELO.
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

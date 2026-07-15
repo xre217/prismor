@@ -63,6 +63,8 @@ class DuelState:
     last_away_action: str | None = None
     player_statuses: list = field(default_factory=list)
     enemy_statuses: list = field(default_factory=list)
+    home_relic: str | None = None
+    away_relic: str | None = None
 
     def snapshot(self) -> dict:
         from status_effects import statuses_public
@@ -83,17 +85,44 @@ class DuelState:
 
 def _hit_damage(state: DuelState, attacker: dict, is_attacker_player: bool, mult: float = 1, ignore_shield: float = 0) -> int:
     from status_effects import focus_mult, shield_mult
+    from relics import relic_damage_mult
 
     if is_attacker_player:
         defender_stats = state.enemy["stats"]
         guarding = state.guarding_enemy
+        relic_id = state.home_relic
     else:
         defender_stats = state.player["stats"]
         guarding = state.guarding_player
+        relic_id = state.away_relic
     sf = shield_mult(state, not is_attacker_player)
     dmg = calc_damage(attacker, defender_stats, guarding, mult, ignore_shield, shield_factor=sf)
-    dmg = max(3, int(dmg * focus_mult(state, is_attacker_player)))
+    dmg = max(3, int(dmg * focus_mult(state, is_attacker_player) * relic_damage_mult(relic_id)))
     return dmg
+
+
+def _relic_id_for(state: DuelState, is_player: bool) -> str | None:
+    return state.home_relic if is_player else state.away_relic
+
+
+def _apply_relic_guard(state: DuelState, is_player: bool, entries: list) -> None:
+    from relics import effects_for
+    from status_effects import apply_status, cleanse
+
+    eff = effects_for(_relic_id_for(state, is_player))
+    if eff.get("guard_cleanse"):
+        cleanse(state, is_player, entries, count=1)
+    if eff.get("guard_regen"):
+        apply_status(state, "regen", is_player, 1, entries, source="Relic")
+
+
+def _maybe_relic_strike_burn(state: DuelState, is_player: bool, entries: list) -> None:
+    from relics import effects_for
+    from status_effects import apply_status
+
+    chance = float(effects_for(_relic_id_for(state, is_player)).get("strike_burn_chance", 0))
+    if chance and random.random() < chance:
+        apply_status(state, "burn", not is_player, 2, entries, source="Relic")
 
 
 def ai_choose_action(state: DuelState, is_enemy: bool) -> str:
@@ -161,6 +190,7 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
             state.guarding_enemy = True
         entries.append(state.add_log(f"{name} guards.", "player" if is_player_turn else "enemy"))
         apply_hufflepuff_guard_heal(state, is_player_turn, entries)
+        _apply_relic_guard(state, is_player_turn, entries)
         record_action(state, action, is_player_turn)
         return entries
 
@@ -177,6 +207,7 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
         if gryffindor_damage_mult(state, is_player_turn) > 1.0:
             passive_log_for_action(state, is_player_turn, entries)
         entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
+        _maybe_relic_strike_burn(state, is_player_turn, entries)
         record_action(state, action, is_player_turn)
         return entries
 
@@ -202,7 +233,10 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
                     entries.append(state.add_log(f"Stolen chaos hits them for {dmg}!", "player"))
             else:
                 entries.extend(_apply_damage(state, "enemy" if is_player_turn else "player", dmg, name, is_player_turn))
-                if random.random() < 0.40:
+                from relics import effects_for
+                relic_id = state.home_relic if is_player_turn else state.away_relic
+                eff = effects_for(relic_id)
+                if eff.get("chaos_burn_always") or random.random() < 0.40:
                     apply_status(state, "burn", not is_player_turn, 2, entries, source="Chaos")
         elif outcome < 0.7:
             d = random.randint(8, 22)

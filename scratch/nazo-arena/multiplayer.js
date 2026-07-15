@@ -140,10 +140,18 @@
       case "war.duel.end":
         onDuelEnd(msg);
         break;
+      case "relic.updated":
+        if (msg.stats) mp.stats = msg.stats;
+        renderGuildHall();
+        setStatus("Relic equipped");
+        break;
       case "war.end":
         if (msg.stats) mp.stats = msg.stats;
         applyBoard(msg);
         showWarResult(msg);
+        if (msg.relicDrop) {
+          setStatus(`Relic unlocked: ${msg.relicDrop.icon} ${msg.relicDrop.name}`);
+        }
         break;
     }
   }
@@ -329,9 +337,42 @@
     `;
   }
 
+  function renderRelicPanel() {
+    const el = $("relic-panel");
+    if (!el) return;
+    const relics = mp.stats?.relics || [];
+    const equipped = mp.stats?.equippedRelic;
+    if (!relics.length) {
+      el.innerHTML = `<h3>Relics</h3><p class="muted">Win house wars to unlock relics.</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <h3>Relics ${equipped ? `· Equipped ${equipped.icon} ${equipped.name}` : ""}</h3>
+      <div class="relic-grid">
+        ${relics.map((r) => `
+          <button type="button" class="relic-card rarity-${r.rarity} ${r.equipped ? "equipped" : ""} ${r.owned ? "" : "locked"}"
+            data-id="${r.id}" ${r.owned ? "" : "disabled"}>
+            <span class="relic-icon">${r.owned ? r.icon : "❓"}</span>
+            <span class="relic-name">${r.owned ? r.name : "Locked"}</span>
+            <span class="relic-rarity">${r.rarity}</span>
+            <span class="relic-desc">${r.owned ? r.desc : "Win wars to discover"}</span>
+          </button>
+        `).join("")}
+      </div>
+    `;
+    el.querySelectorAll(".relic-card:not(.locked)").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        const already = mp.stats?.equippedRelic?.id === id;
+        send("relic.equip", { relicId: already ? null : id });
+      });
+    });
+  }
+
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
+    renderRelicPanel();
     const g = mp.guild;
     if (!g) {
       $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
@@ -536,8 +577,16 @@
     if (msg.theirMastery && msg.theirMastery.tier > 0) {
       log(`Their mastery — ${msg.theirMastery.tierName}: ${msg.theirMastery.bonusDesc}`, "system");
     }
+    if (msg.yourRelic) {
+      log(`Your relic — ${msg.yourRelic.icon} ${msg.yourRelic.name}: ${msg.yourRelic.desc}`, "player");
+    }
+    if (msg.theirRelic) {
+      log(`Their relic — ${msg.theirRelic.icon} ${msg.theirRelic.name}`, "enemy");
+    }
+    (msg.log || []).forEach((e) => log(e.msg, e.cls));
     showBattlePassive(mp.guild?.factionId);
     showMasteryBanner(msg.yourMastery);
+    showRelicBanner(msg.yourRelic);
     showIntel(null);
     setWarActions(!!msg.yourTurn);
     showScreen("screen-battle");
@@ -548,6 +597,17 @@
     if (!el) return;
     if (mastery && mastery.tier > 0) {
       el.textContent = `Mastery — ${mastery.tierName}: ${mastery.bonusDesc}`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
+  function showRelicBanner(relic) {
+    const el = $("battle-relic");
+    if (!el) return;
+    if (relic) {
+      el.textContent = `Relic — ${relic.icon} ${relic.name}: ${relic.desc}`;
       el.classList.remove("hidden");
     } else {
       el.classList.add("hidden");
@@ -624,9 +684,13 @@
     const oppName = msg.opponent.house || msg.opponent.name;
     $("result-art").textContent = msg.won ? "🏆" : "💀";
     $("result-title").textContent = msg.won ? "Guild Victory" : "Guild Defeat";
-    $("result-body").textContent = msg.won
+    let body = msg.won
       ? `Your guild beat ${oppName} ${your}–${their}. ELO ${msg.guild.elo}.`
       : `${oppName} took it ${their}–${your}. ELO ${msg.guild.elo}.`;
+    if (msg.relicDrop) {
+      body += ` Relic unlocked: ${msg.relicDrop.icon} ${msg.relicDrop.name}.`;
+    }
+    $("result-body").textContent = body;
     $("btn-replay").classList.add("hidden");
     $("btn-result-guild").classList.remove("hidden");
     setStatus(msg.won ? "Victory recorded" : "Defeat recorded");

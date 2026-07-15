@@ -34,6 +34,13 @@ from system_guilds import (
 from store import ArenaStore
 from mastery import apply_mastery, mastery_public, system_mastery_xp
 from season import ensure_season, season_public
+from relics import (
+    apply_relic_duel_open,
+    apply_relic_to_fighter,
+    relic_public,
+    roll_relic_drop,
+    system_relic_for_elo,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -592,6 +599,31 @@ async def maybe_start_duels(war_id: str) -> None:
         await start_duel(war_id)
 
 
+def relic_for_side(war: dict, side: str) -> str | None:
+    """Equipped relic for the side's picker, or System fake relic."""
+    key = f"{side}_relic"
+    if key in war:
+        return war[key]
+    gid = war[f"{side}_id"]
+    g = guilds.get(gid, {})
+    if g.get("is_system"):
+        rid = system_relic_for_elo(g.get("elo", 1000))
+        war[key] = rid
+        return rid
+    picker = war.get(f"{side}_picker_pid")
+    if picker:
+        rid = store.get_equipped_relic(picker)
+        war[key] = rid
+        return rid
+    members = online_member_ids(gid)
+    if members:
+        rid = store.get_equipped_relic(members[0])
+        war[key] = rid
+        return rid
+    war[key] = None
+    return None
+
+
 def mastery_xp_for_side(war: dict, side: str, fighter_id: str) -> int:
     """XP for the picker (or best online member) for this fighter; System gets ELO-scaled fake XP."""
     gid = war[f"{side}_id"]
@@ -630,6 +662,11 @@ async def start_duel(war_id: str) -> None:
     home_m = apply_mastery(home_f, home_xp)
     away_m = apply_mastery(away_f, away_xp)
 
+    home_relic = relic_for_side(war, "home")
+    away_relic = relic_for_side(war, "away")
+    home_r = apply_relic_to_fighter(home_f, home_relic, first_pick=(idx == 0))
+    away_r = apply_relic_to_fighter(away_f, away_relic, first_pick=(idx == 0))
+
     home_g = guilds[war["home_id"]]
     away_g = guilds[war["away_id"]]
     duel = DuelState(player=home_f, enemy=away_f)
@@ -637,6 +674,13 @@ async def start_duel(war_id: str) -> None:
     duel.enemy_hp = away_f["maxHp"]
     duel.home_faction = home_g.get("faction_id")
     duel.away_faction = away_g.get("faction_id")
+    duel.home_relic = home_relic
+    duel.away_relic = away_relic
+
+    open_log: list = []
+    apply_relic_duel_open(duel, True, home_relic, open_log)
+    apply_relic_duel_open(duel, False, away_relic, open_log)
+
     war["duel"] = duel
     war["turn"] = "home"
     war["waiting_action"] = False
@@ -653,8 +697,10 @@ async def start_duel(war_id: str) -> None:
         "theirFighter": None,
         "yourMastery": None,
         "theirMastery": None,
+        "yourRelic": None,
+        "theirRelic": None,
         "state": duel.snapshot(),
-        "log": [],
+        "log": open_log,
     }
 
     for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
@@ -667,18 +713,36 @@ async def start_duel(war_id: str) -> None:
             m["theirFighter"] = away_f
             m["yourMastery"] = home_m
             m["theirMastery"] = away_m
+            m["yourRelic"] = home_r
+            m["theirRelic"] = away_r
+            m["log"] = open_log
         else:
             m["yourFighter"] = away_f
             m["theirFighter"] = home_f
             m["yourMastery"] = away_m
             m["theirMastery"] = home_m
+            m["yourRelic"] = away_r
+            m["theirRelic"] = home_r
+            flipped = []
+            for e in open_log:
+                cls = e.get("cls", "system")
+                if cls == "player":
+                    cls = "enemy"
+                elif cls == "enemy":
+                    cls = "player"
+                flipped.append({**e, "cls": cls})
+            m["log"] = flipped
+            snap = duel.snapshot()
             m["state"] = {
                 "playerHp": duel.enemy_hp,
                 "enemyHp": duel.player_hp,
                 "playerMax": duel.enemy["maxHp"],
                 "enemyMax": duel.player["maxHp"],
                 "guarding": {"player": duel.guarding_enemy, "enemy": duel.guarding_player},
-                "statuses": {"player": [], "enemy": []},
+                "statuses": {
+                    "player": snap["statuses"]["enemy"],
+                    "enemy": snap["statuses"]["player"],
+                },
             }
         for pid in g["player_ids"]:
             await send_player(pid, m)
@@ -905,11 +969,16 @@ async def finish_war(war_id: str) -> None:
         for pid in g.get("player_ids", []):
             store.record_player_war(pid, won)
             store.record_season_player_war(sid, pid, won)
+            if won:
+                drop = roll_relic_drop(store.player_relic_ids(pid))
+                if drop and store.unlock_relic(pid, drop):
+                    war.setdefault("relic_drops", {})[pid] = drop
         if picker_pid and picks:
             for fighter_id in picks:
                 store.add_mastery(picker_pid, fighter_id, xp=4 if won else 1, won=won, record=False)
 
     board = leaderboard_payload()
+    drops = war.get("relic_drops", {})
 
     for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
         g = guilds[gid]
@@ -921,6 +990,7 @@ async def finish_war(war_id: str) -> None:
             stats = store.player_public(pid, season_id=sid)
             your_score = war["home_score"] if you_are == "home" else war["away_score"]
             their_score = war["away_score"] if you_are == "home" else war["home_score"]
+            drop_info = relic_public(drops[pid]) if pid in drops else None
             await send_player(pid, {
                 "type": "war.end",
                 "warId": war_id,
@@ -937,6 +1007,7 @@ async def finish_war(war_id: str) -> None:
                 "season": board["season"],
                 "playerBoard": board["playerBoard"],
                 "history": board["history"],
+                "relicDrop": drop_info,
             })
 
     home_id, away_id = war["home_id"], war["away_id"]
@@ -996,6 +1067,8 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
 
         row = store.create_player(nickname)
         pid = row["id"]
+        # Starter relic
+        store.unlock_relic(pid, "iron_ward")
         players[pid] = {
             "ws": ws,
             "nickname": nickname,
@@ -1083,6 +1156,20 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "season": board["season"],
             "playerBoard": board["playerBoard"],
             "history": board["history"],
+        }))
+        return
+
+    if mtype == "relic.equip":
+        relic_id = msg.get("relicId")
+        if relic_id == "" or relic_id is False:
+            relic_id = None
+        if not store.set_equipped_relic(pid, relic_id):
+            await ws.send(_json({"type": "error", "message": "Cannot equip that relic"}))
+            return
+        board = leaderboard_payload()
+        await ws.send(_json({
+            "type": "relic.updated",
+            "stats": store.player_public(pid, season_id=board["season"]["id"]),
         }))
         return
 

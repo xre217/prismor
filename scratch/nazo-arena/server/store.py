@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS season_players (
 CREATE INDEX IF NOT EXISTS idx_season_players_season ON season_players(season_id);
 """
 
+RELIC_SCHEMA = """
+CREATE TABLE IF NOT EXISTS player_relics (
+    player_id TEXT NOT NULL,
+    relic_id TEXT NOT NULL,
+    unlocked_at TEXT NOT NULL,
+    PRIMARY KEY (player_id, relic_id)
+);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -102,7 +111,9 @@ class ArenaStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.executescript(SEASON_SCHEMA)
+        self.conn.executescript(RELIC_SCHEMA)
         self._migrate_war_log_season()
+        self._migrate_equipped_relic()
         self.conn.commit()
 
     def _migrate_war_log_season(self) -> None:
@@ -110,12 +121,59 @@ class ArenaStore:
         if "season_id" not in cols:
             self.conn.execute("ALTER TABLE war_log ADD COLUMN season_id INTEGER")
 
+    def _migrate_equipped_relic(self) -> None:
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(players)").fetchall()}
+        if "equipped_relic" not in cols:
+            self.conn.execute("ALTER TABLE players ADD COLUMN equipped_relic TEXT")
+
     def close(self) -> None:
         self.conn.close()
 
     def ensure_season_schema(self) -> None:
         self.conn.executescript(SEASON_SCHEMA)
         self.conn.commit()
+
+    # --- relics ---
+
+    def unlock_relic(self, pid: str, relic_id: str) -> bool:
+        """Unlock a relic. Returns True if newly unlocked."""
+        cur = self.conn.execute(
+            """
+            INSERT OR IGNORE INTO player_relics (player_id, relic_id, unlocked_at)
+            VALUES (?, ?, ?)
+            """,
+            (pid, relic_id, _now()),
+        )
+        self.conn.commit()
+        if cur.rowcount:
+            # Auto-equip if nothing equipped
+            row = self.get_player_by_id(pid)
+            if row and not row.get("equipped_relic"):
+                self.set_equipped_relic(pid, relic_id)
+            return True
+        return False
+
+    def player_relic_ids(self, pid: str) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT relic_id FROM player_relics WHERE player_id = ?", (pid,)
+        ).fetchall()
+        return {r["relic_id"] for r in rows}
+
+    def set_equipped_relic(self, pid: str, relic_id: str | None) -> bool:
+        if relic_id is not None:
+            owned = self.player_relic_ids(pid)
+            if relic_id not in owned:
+                return False
+        self.conn.execute(
+            "UPDATE players SET equipped_relic = ?, last_seen = ? WHERE id = ?",
+            (relic_id, _now(), pid),
+        )
+        self.conn.commit()
+        return True
+
+    def get_equipped_relic(self, pid: str) -> str | None:
+        row = self.get_player_by_id(pid)
+        return row.get("equipped_relic") if row else None
 
     # --- seasons ---
 
@@ -364,9 +422,13 @@ class ArenaStore:
         return out
 
     def player_public(self, pid: str, season_id: int | None = None) -> dict | None:
+        from relics import catalog_public, relic_public
+
         p = self.get_player_by_id(pid)
         if not p:
             return None
+        owned = self.player_relic_ids(pid)
+        equipped = p.get("equipped_relic")
         out = {
             "id": p["id"],
             "nickname": p["nickname"],
@@ -376,6 +438,8 @@ class ArenaStore:
             "duelsWon": p["duels_won"],
             "duelsLost": p["duels_lost"],
             "mastery": self.player_mastery(pid),
+            "equippedRelic": relic_public(equipped, equipped=True) if equipped else None,
+            "relics": catalog_public(owned, equipped),
         }
         if season_id is not None:
             sp = self.player_season_stats(season_id, pid)

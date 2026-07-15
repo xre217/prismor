@@ -376,6 +376,8 @@ function endGame(won) {
   $("battle-passive").classList.add("hidden");
   const bm = $("battle-mastery");
   if (bm) bm.classList.add("hidden");
+  const br = $("battle-relic");
+  if (br) br.classList.add("hidden");
   $("battle-intel").classList.add("hidden");
   showScreen("screen-result");
 }
