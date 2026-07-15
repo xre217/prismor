@@ -1306,6 +1306,8 @@ async def system_turn_loop(war_id: str) -> None:
         war = wars.get(war_id)
         if not war or war["phase"] != "duel" or not war["duel"]:
             return
+        if war.get("settling_duel") or duel_winner(war["duel"]):
+            return
         sys_gid = war["system_side"]
         turn = war["turn"]
         sys_is_home = sys_gid == war["home_id"]
@@ -1319,7 +1321,9 @@ async def system_turn_loop(war_id: str) -> None:
 
         await asyncio.sleep(random.uniform(THINK_MIN, THINK_MAX))
         war = wars.get(war_id)
-        if not war or war["phase"] != "duel":
+        if not war or war["phase"] != "duel" or not war["duel"]:
+            return
+        if war.get("settling_duel") or duel_winner(war["duel"]):
             return
         action = ai_choose_action(war["duel"], is_enemy=not sys_is_home)
         await handle_war_action(war_id, sys_gid, action, from_system=True)
@@ -1330,14 +1334,20 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
     war = wars.get(war_id)
     if not war or war["phase"] != "duel" or not war["duel"]:
         return
+    if war.get("settling_duel"):
+        return
 
     is_home = guild_id == war["home_id"]
     expected = war["turn"]
     if (expected == "home" and not is_home) or (expected == "away" and is_home):
         return
 
-    war["waiting_action"] = True
     d = war["duel"]
+    # Already decided — ignore late actions (system AI race after a KO).
+    if duel_winner(d):
+        return
+
+    war["waiting_action"] = True
     is_player_turn = is_home
     entries = apply_player_action(d, action, is_player_turn=is_player_turn)
     append_duel_log(war, entries)
@@ -1349,6 +1359,9 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
 
     winner = duel_winner(d)
     if winner:
+        # Lock out system_turn_loop / duplicate actions during the between-duel pause.
+        war["settling_duel"] = True
+        war["waiting_action"] = True
         if winner == "player":
             war["home_score"] += 1
             home_duel_won = True
@@ -1383,7 +1396,10 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
         await asyncio.sleep(1.2)
         war["duel_index"] += 1
         war["duel"] = None
-        if war["duel_index"] >= 3:
+        war["settling_duel"] = False
+        war["waiting_action"] = False
+        # Best-of-3: stop early when a side can no longer be caught.
+        if war["duel_index"] >= 3 or war["home_score"] >= 2 or war["away_score"] >= 2:
             await finish_war(war_id)
         else:
             await start_duel(war_id)
