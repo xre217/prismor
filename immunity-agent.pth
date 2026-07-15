@@ -1,1 +1,0 @@
-import sys; exec("try:\n import prismor.runtime._post_install; prismor.runtime._post_install.maybe_show()\nexcept Exception:\n pass")
