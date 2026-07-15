@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nazo Arena — 謎の箱</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="scanlines"></div>
+  <div id="app">
+    <header>
+      <h1>NAZO ARENA</h1>
+      <p class="subtitle">謎の箱 · pull fighters · wreck the bracket</p>
+    </header>
+
+    <section id="screen-title" class="screen active">
+      <div class="box-art">📦</div>
+      <p class="tagline">Three pulls. One roster. Eight fights. No mercy.</p>
+      <button id="btn-start" class="btn primary">Open the Box</button>
+      <button id="btn-how" class="btn ghost">How it works</button>
+    </section>
+
+    <section id="screen-how" class="screen">
+      <h2>Rules</h2>
+      <ul class="rules">
+        <li><strong>Draft</strong> — open 3 mystery boxes. Pick fighters for your roster.</li>
+        <li><strong>Battle</strong> — each turn: Strike, Guard, Skill, or Chaos.</li>
+        <li><strong>Stats</strong> — Power, Speed, Mind, Shield, Luck shape every clash.</li>
+        <li><strong>Campaign</strong> — 8 arena tiers. Lose all HP and it's over.</li>
+        <li><strong>Swap</strong> — between rounds, rotate bench fighters if one's cooked.</li>
+      </ul>
+      <button id="btn-how-back" class="btn ghost">Back</button>
+    </section>
+
+    <section id="screen-draft" class="screen">
+      <h2>Mystery Pull <span id="pull-count">1 / 3</span></h2>
+      <div id="draft-options" class="card-row"></div>
+      <div id="roster-preview" class="roster"></div>
+    </section>
+
+    <section id="screen-battle" class="screen">
+      <div class="battle-header">
+        <span id="tier-label">Tier 1</span>
+        <span id="score-label">Wins: 0</span>
+      </div>
+      <div class="arena">
+        <div class="fighter-panel player-side">
+          <div id="player-sprite" class="sprite">?</div>
+          <div id="player-name" class="fname">—</div>
+          <div class="hp-bar"><div id="player-hp" class="hp-fill"></div></div>
+          <div id="player-hp-text" class="hp-text">100 / 100</div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="fighter-panel enemy-side">
+          <div id="enemy-sprite" class="sprite">?</div>
+          <div id="enemy-name" class="fname">—</div>
+          <div class="hp-bar"><div id="enemy-hp" class="hp-fill enemy"></div></div>
+          <div id="enemy-hp-text" class="hp-text">100 / 100</div>
+        </div>
+      </div>
+      <div id="battle-log" class="log"></div>
+      <div id="action-bar" class="actions">
+        <button class="btn action" data-action="strike">⚔ Strike</button>
+        <button class="btn action" data-action="guard">🛡 Guard</button>
+        <button class="btn action" data-action="skill">✦ Skill</button>
+        <button class="btn action" data-action="chaos">☠ Chaos</button>
+      </div>
+      <div id="swap-bar" class="swap hidden">
+        <p>Fighter down! Send the next one:</p>
+        <div id="swap-options" class="card-row small"></div>
+      </div>
+    </section>
+
+    <section id="screen-result" class="screen">
+      <div id="result-art" class="box-art">🏆</div>
+      <h2 id="result-title">Champion</h2>
+      <p id="result-body"></p>
+      <button id="btn-replay" class="btn primary">Run it back</button>
+    </section>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
