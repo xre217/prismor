@@ -83,6 +83,18 @@ Twelve regions on the castle grounds. Click a **rival or neutral** region in the
 
 Owned lands stack mild bonuses in guild wars (**max 3**). Season rollover restores home defaults and clears neutrals.
 
+## Daily quests & rewards
+
+Three quests refresh each **UTC day** in the guild hall:
+
+| Quest | Goal | Reward |
+|-------|------|--------|
+| House Duty | Finish 1 war | +20 QP |
+| Claim Glory | Win 1 war | +35 QP · 30% common relic |
+| Sparring | Win 2 duels | +25 QP · +8 mastery XP |
+
+Spend **quest points** in the shop: Mastery Tome (30), Relic Cache (55), Fortune Draw (80).
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

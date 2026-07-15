@@ -49,6 +49,15 @@ from territories import (
     map_public,
     territory_public,
 )
+from quests import (
+    DAILY_QUESTS,
+    METRIC_QUESTS,
+    QUEST_BY_ID,
+    SHOP_BY_ID,
+    roll_common_relic,
+    roll_fortune_relic,
+    utc_day_key,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -77,6 +86,52 @@ def territories_payload() -> list[dict]:
     season = current_season()
     owners = {r["id"]: r.get("owner_faction") for r in store.all_territories()}
     return map_public(owners)
+
+
+def bump_quest_metric(pid: str, metric: str, amount: int = 1) -> None:
+    """Advance today's daily quests that use this metric."""
+    qids = METRIC_QUESTS.get(metric) or []
+    if not qids:
+        return
+    day = utc_day_key()
+    store.ensure_daily_quests(pid, day, [q["id"] for q in DAILY_QUESTS])
+    store.bump_daily_metric(pid, day, qids, amount)
+
+
+def apply_quest_reward(pid: str, reward: dict) -> dict:
+    """Grant quest claim rewards. Returns extras for the client."""
+    extras: dict = {"qpGained": 0, "relic": None, "mastery": None}
+    qp = int(reward.get("qp", 0))
+    if qp:
+        store.add_quest_points(pid, qp)
+        extras["qpGained"] = qp
+
+    chance = float(reward.get("relic_roll", 0) or 0)
+    if chance and random.random() < chance:
+        drop = roll_common_relic(store.player_relic_ids(pid))
+        if drop and store.unlock_relic(pid, drop):
+            extras["relic"] = relic_public(drop)
+
+    mxp = int(reward.get("mastery_xp", 0) or 0)
+    if mxp:
+        fighter_id = _pick_mastery_target(pid)
+        if fighter_id:
+            store.add_mastery(pid, fighter_id, xp=mxp, won=True, record=False)
+            extras["mastery"] = {"fighterId": fighter_id, "xp": mxp}
+    return extras
+
+
+def _pick_mastery_target(pid: str) -> str | None:
+    rows = store.player_mastery(pid, limit=8)
+    if rows:
+        return rows[0]["fighter_id"]
+    p = store.get_player_by_id(pid)
+    fid = (p or {}).get("faction_id")
+    if fid and fid in FACTIONS:
+        fighters = FACTIONS[fid].get("fighters") or []
+        if fighters:
+            return fighters[0]["id"]
+    return None
 
 
 def leaderboard_payload() -> dict:
@@ -903,6 +958,8 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
             for pid in g.get("player_ids", []):
                 store.record_player_duel(pid, won)
                 store.record_season_player_duel(season["id"], pid, won)
+                if won:
+                    bump_quest_metric(pid, "duels_won")
             # Award mastery XP to the fighter that just fought
             fighter_id = war.get(f"{side}_duel_fighter")
             picker = war.get(f"{side}_picker_pid")
@@ -1063,7 +1120,9 @@ async def finish_war(war_id: str) -> None:
         for pid in g.get("player_ids", []):
             store.record_player_war(pid, won)
             store.record_season_player_war(sid, pid, won)
+            bump_quest_metric(pid, "wars_played")
             if won:
+                bump_quest_metric(pid, "wars_won")
                 drop = roll_relic_drop(store.player_relic_ids(pid))
                 if drop and store.unlock_relic(pid, drop):
                     war.setdefault("relic_drops", {})[pid] = drop
@@ -1271,6 +1330,83 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         await ws.send(_json({
             "type": "relic.updated",
             "stats": store.player_public(pid, season_id=board["season"]["id"]),
+        }))
+        return
+
+    if mtype == "quest.claim":
+        quest_id = msg.get("questId")
+        qdef = QUEST_BY_ID.get(quest_id or "")
+        if not qdef:
+            await ws.send(_json({"type": "error", "message": "Unknown quest"}))
+            return
+        day = utc_day_key()
+        store.ensure_daily_quests(pid, day, [q["id"] for q in DAILY_QUESTS])
+        row = store.get_daily_quest_row(pid, day, quest_id)
+        if not row:
+            await ws.send(_json({"type": "error", "message": "Quest not found"}))
+            return
+        if row.get("claimed"):
+            await ws.send(_json({"type": "error", "message": "Already claimed"}))
+            return
+        if int(row.get("progress") or 0) < int(qdef["target"]):
+            await ws.send(_json({"type": "error", "message": "Quest not complete"}))
+            return
+        if not store.claim_daily_quest(pid, day, quest_id):
+            await ws.send(_json({"type": "error", "message": "Could not claim"}))
+            return
+        extras = apply_quest_reward(pid, qdef.get("reward") or {})
+        board = leaderboard_payload()
+        await ws.send(_json({
+            "type": "quest.updated",
+            "stats": store.player_public(pid, season_id=board["season"]["id"]),
+            "claimed": quest_id,
+            "reward": extras,
+        }))
+        return
+
+    if mtype == "quest.shop":
+        item_id = msg.get("itemId")
+        item = SHOP_BY_ID.get(item_id or "")
+        if not item:
+            await ws.send(_json({"type": "error", "message": "Unknown shop item"}))
+            return
+        if not store.spend_quest_points(pid, item["cost"]):
+            await ws.send(_json({"type": "error", "message": "Not enough quest points"}))
+            return
+        result: dict = {"itemId": item_id, "relic": None, "mastery": None}
+        kind = item["kind"]
+        if kind == "mastery_xp":
+            fighter_id = _pick_mastery_target(pid)
+            amount = int(item.get("amount", 10))
+            if fighter_id:
+                store.add_mastery(pid, fighter_id, xp=amount, won=True, record=False)
+                result["mastery"] = {"fighterId": fighter_id, "xp": amount}
+            else:
+                # refund if nothing to boost
+                store.add_quest_points(pid, item["cost"])
+                await ws.send(_json({"type": "error", "message": "No fighter to train yet"}))
+                return
+        elif kind == "relic_common":
+            drop = roll_common_relic(store.player_relic_ids(pid))
+            if not drop:
+                store.add_quest_points(pid, item["cost"])
+                await ws.send(_json({"type": "error", "message": "You already own all common relics"}))
+                return
+            store.unlock_relic(pid, drop)
+            result["relic"] = relic_public(drop)
+        elif kind == "relic_fortune":
+            drop = roll_fortune_relic(store.player_relic_ids(pid))
+            if not drop:
+                store.add_quest_points(pid, item["cost"])
+                await ws.send(_json({"type": "error", "message": "Relic collection complete"}))
+                return
+            store.unlock_relic(pid, drop)
+            result["relic"] = relic_public(drop)
+        board = leaderboard_payload()
+        await ws.send(_json({
+            "type": "quest.updated",
+            "stats": store.player_public(pid, season_id=board["season"]["id"]),
+            "shopPurchase": result,
         }))
         return
 

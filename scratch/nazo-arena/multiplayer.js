@@ -149,6 +149,24 @@
         renderGuildHall();
         setStatus("Relic equipped");
         break;
+      case "quest.updated":
+        if (msg.stats) mp.stats = msg.stats;
+        renderGuildHall();
+        if (msg.reward) {
+          let line = `Quest claimed · +${msg.reward.qpGained || 0} QP`;
+          if (msg.reward.relic) line += ` · ${msg.reward.relic.icon} ${msg.reward.relic.name}`;
+          if (msg.reward.mastery) line += ` · +${msg.reward.mastery.xp} mastery`;
+          setStatus(line);
+        } else if (msg.shopPurchase) {
+          const p = msg.shopPurchase;
+          let line = "Shop purchase";
+          if (p.relic) line = `Unlocked ${p.relic.icon} ${p.relic.name}`;
+          if (p.mastery) line = `+${p.mastery.xp} mastery XP`;
+          setStatus(line);
+        } else {
+          setStatus("Quests updated");
+        }
+        break;
       case "war.end":
         if (msg.stats) mp.stats = msg.stats;
         applyBoard(msg);
@@ -342,6 +360,7 @@
       <div class="player-stats">
         <div class="stat-line"><strong>${s.nickname || mp.nickname}</strong></div>
         <div class="stat-line">Career · Wars ${s.warsWon}W ${s.warsLost}L · Duels ${s.duelsWon}W ${s.duelsLost}L</div>
+        <div class="stat-line">Quest points · <strong>${s.questPoints || 0} QP</strong></div>
         ${s.season ? `<div class="stat-line">Season · Wars ${s.season.warsWon}W ${s.season.warsLost}L · Duels ${s.season.duelsWon}W ${s.season.duelsLost}L</div>` : ""}
         ${mastery
           ? `<div class="mastery-row">${mastery}</div>`
@@ -349,6 +368,68 @@
         <div class="stat-line muted">Mastery boosts stats in guild war duels (Adept → Legend).</div>
       </div>
     `;
+  }
+
+  function formatReset(sec) {
+    const s = Math.max(0, sec | 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+
+  function renderQuestPanel() {
+    const el = $("quest-panel");
+    if (!el) return;
+    const d = mp.stats?.dailies;
+    if (!d) {
+      el.innerHTML = `<h3>Daily Quests</h3><p class="muted">Connect to load today's slate.</p>`;
+      return;
+    }
+    const quests = d.quests || [];
+    el.innerHTML = `
+      <h3>Daily Quests · ${d.questPoints || 0} QP</h3>
+      <p class="muted">Resets in ${formatReset(d.resetsInSec)} (UTC)</p>
+      <div class="quest-list">
+        ${quests.map((q) => `
+          <div class="quest-row ${q.complete ? "complete" : ""} ${q.claimed ? "claimed" : ""}">
+            <div class="quest-main">
+              <span class="quest-icon">${q.icon}</span>
+              <div>
+                <div class="quest-title">${q.title}</div>
+                <div class="quest-desc">${q.desc}</div>
+                <div class="quest-reward">${q.rewardDesc}</div>
+              </div>
+            </div>
+            <div class="quest-side">
+              <div class="quest-prog">${q.progress}/${q.target}</div>
+              ${q.claimable
+                ? `<button type="button" class="btn tiny quest-claim" data-id="${q.id}">Claim</button>`
+                : q.claimed
+                  ? `<span class="quest-done">Claimed</span>`
+                  : `<span class="quest-pending">In progress</span>`}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <h4 class="quest-shop-title">Quest Shop</h4>
+      <div class="quest-shop">
+        ${(d.shop || []).map((item) => `
+          <button type="button" class="shop-card ${item.affordable ? "" : "locked"}"
+            data-id="${item.id}" ${item.affordable ? "" : "disabled"}>
+            <span class="shop-icon">${item.icon}</span>
+            <span class="shop-name">${item.name}</span>
+            <span class="shop-cost">${item.cost} QP</span>
+            <span class="shop-desc">${item.desc}</span>
+          </button>
+        `).join("")}
+      </div>
+    `;
+    el.querySelectorAll(".quest-claim").forEach((btn) => {
+      btn.addEventListener("click", () => send("quest.claim", { questId: btn.dataset.id }));
+    });
+    el.querySelectorAll(".shop-card:not(.locked)").forEach((btn) => {
+      btn.addEventListener("click", () => send("quest.shop", { itemId: btn.dataset.id }));
+    });
   }
 
   function renderRelicPanel() {
@@ -438,6 +519,7 @@
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
+    renderQuestPanel();
     renderRelicPanel();
     renderTerritoryMap();
     const g = mp.guild;

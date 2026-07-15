@@ -107,6 +107,20 @@ CREATE TABLE IF NOT EXISTS territories (
 );
 """
 
+QUEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS player_daily_quests (
+    player_id TEXT NOT NULL,
+    day_key TEXT NOT NULL,
+    quest_id TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, day_key, quest_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_quests_player_day
+    ON player_daily_quests(player_id, day_key);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -122,8 +136,10 @@ class ArenaStore:
         self.conn.executescript(SEASON_SCHEMA)
         self.conn.executescript(RELIC_SCHEMA)
         self.conn.executescript(TERRITORY_SCHEMA)
+        self.conn.executescript(QUEST_SCHEMA)
         self._migrate_war_log_season()
         self._migrate_equipped_relic()
+        self._migrate_quest_points()
         self.conn.commit()
 
     def _migrate_war_log_season(self) -> None:
@@ -135,6 +151,13 @@ class ArenaStore:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(players)").fetchall()}
         if "equipped_relic" not in cols:
             self.conn.execute("ALTER TABLE players ADD COLUMN equipped_relic TEXT")
+
+    def _migrate_quest_points(self) -> None:
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(players)").fetchall()}
+        if "quest_points" not in cols:
+            self.conn.execute(
+                "ALTER TABLE players ADD COLUMN quest_points INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -261,6 +284,94 @@ class ArenaStore:
             """
         ).fetchall()
         return {r["owner_faction"]: int(r["c"]) for r in rows}
+
+    # --- daily quests ---
+
+    def get_quest_points(self, pid: str) -> int:
+        row = self.get_player_by_id(pid)
+        return int(row.get("quest_points") or 0) if row else 0
+
+    def add_quest_points(self, pid: str, amount: int) -> int:
+        self.conn.execute(
+            "UPDATE players SET quest_points = COALESCE(quest_points, 0) + ?, last_seen = ? WHERE id = ?",
+            (int(amount), _now(), pid),
+        )
+        self.conn.commit()
+        return self.get_quest_points(pid)
+
+    def spend_quest_points(self, pid: str, amount: int) -> bool:
+        amount = int(amount)
+        if amount <= 0:
+            return False
+        cur = self.conn.execute(
+            """
+            UPDATE players SET quest_points = quest_points - ?, last_seen = ?
+            WHERE id = ? AND COALESCE(quest_points, 0) >= ?
+            """,
+            (amount, _now(), pid, amount),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def ensure_daily_quests(self, pid: str, day_key: str, quest_ids: list[str]) -> list[dict]:
+        for qid in quest_ids:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO player_daily_quests
+                    (player_id, day_key, quest_id, progress, claimed)
+                VALUES (?, ?, ?, 0, 0)
+                """,
+                (pid, day_key, qid),
+            )
+        self.conn.commit()
+        return self.get_daily_quests(pid, day_key)
+
+    def get_daily_quests(self, pid: str, day_key: str) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT quest_id, progress, claimed
+            FROM player_daily_quests
+            WHERE player_id = ? AND day_key = ?
+            """,
+            (pid, day_key),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def bump_daily_metric(self, pid: str, day_key: str, quest_ids: list[str], amount: int = 1) -> None:
+        """Increment progress for given quest ids (capped later by client/defs)."""
+        for qid in quest_ids:
+            self.conn.execute(
+                """
+                INSERT INTO player_daily_quests (player_id, day_key, quest_id, progress, claimed)
+                VALUES (?, ?, ?, ?, 0)
+                ON CONFLICT(player_id, day_key, quest_id) DO UPDATE SET
+                    progress = progress + excluded.progress
+                """,
+                (pid, day_key, qid, int(amount)),
+            )
+        self.conn.commit()
+
+    def claim_daily_quest(self, pid: str, day_key: str, quest_id: str) -> bool:
+        """Mark claimed if complete enough. Caller validates target."""
+        cur = self.conn.execute(
+            """
+            UPDATE player_daily_quests SET claimed = 1
+            WHERE player_id = ? AND day_key = ? AND quest_id = ? AND claimed = 0
+            """,
+            (pid, day_key, quest_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_daily_quest_row(self, pid: str, day_key: str, quest_id: str) -> dict | None:
+        row = self.conn.execute(
+            """
+            SELECT quest_id, progress, claimed FROM player_daily_quests
+            WHERE player_id = ? AND day_key = ? AND quest_id = ?
+            """,
+            (pid, day_key, quest_id),
+        ).fetchone()
+        return dict(row) if row else None
 
     # --- seasons ---
 
@@ -513,12 +624,16 @@ class ArenaStore:
 
     def player_public(self, pid: str, season_id: int | None = None) -> dict | None:
         from relics import catalog_public, relic_public
+        from quests import DAILY_QUESTS, dailies_payload, utc_day_key
 
         p = self.get_player_by_id(pid)
         if not p:
             return None
         owned = self.player_relic_ids(pid)
         equipped = p.get("equipped_relic")
+        day = utc_day_key()
+        rows = self.ensure_daily_quests(pid, day, [q["id"] for q in DAILY_QUESTS])
+        qp = int(p.get("quest_points") or 0)
         out = {
             "id": p["id"],
             "nickname": p["nickname"],
@@ -530,6 +645,8 @@ class ArenaStore:
             "mastery": self.player_mastery(pid),
             "equippedRelic": relic_public(equipped, equipped=True) if equipped else None,
             "relics": catalog_public(owned, equipped),
+            "questPoints": qp,
+            "dailies": dailies_payload(rows, qp),
         }
         if season_id is not None:
             sp = self.player_season_stats(season_id, pid)
