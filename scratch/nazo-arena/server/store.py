@@ -139,6 +139,26 @@ CREATE INDEX IF NOT EXISTS idx_war_replays_created ON war_replays(created_at DES
 CREATE INDEX IF NOT EXISTS idx_war_replays_season ON war_replays(season_id);
 """
 
+RAID_SCHEMA = """
+CREATE TABLE IF NOT EXISTS player_raids (
+    player_id TEXT NOT NULL,
+    day_key TEXT NOT NULL,
+    boss_id TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    clears INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, day_key, boss_id)
+);
+
+CREATE TABLE IF NOT EXISTS player_raid_clears (
+    player_id TEXT NOT NULL,
+    season_id INTEGER NOT NULL,
+    boss_id TEXT NOT NULL,
+    clears INTEGER NOT NULL DEFAULT 0,
+    last_clear_at TEXT,
+    PRIMARY KEY (player_id, season_id, boss_id)
+);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -156,6 +176,7 @@ class ArenaStore:
         self.conn.executescript(TERRITORY_SCHEMA)
         self.conn.executescript(QUEST_SCHEMA)
         self.conn.executescript(REPLAY_SCHEMA)
+        self.conn.executescript(RAID_SCHEMA)
         self._migrate_war_log_season()
         self._migrate_equipped_relic()
         self._migrate_quest_points()
@@ -457,6 +478,64 @@ class ArenaStore:
         except json.JSONDecodeError:
             return None
 
+    # --- raids ---
+
+    def get_raid_day(self, pid: str, day_key: str, boss_id: str) -> dict:
+        row = self.conn.execute(
+            """
+            SELECT attempts, clears FROM player_raids
+            WHERE player_id = ? AND day_key = ? AND boss_id = ?
+            """,
+            (pid, day_key, boss_id),
+        ).fetchone()
+        if not row:
+            return {"attempts": 0, "clears": 0}
+        return {"attempts": int(row["attempts"]), "clears": int(row["clears"])}
+
+    def record_raid_attempt(self, pid: str, day_key: str, boss_id: str) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO player_raids (player_id, day_key, boss_id, attempts, clears)
+            VALUES (?, ?, ?, 1, 0)
+            ON CONFLICT(player_id, day_key, boss_id) DO UPDATE SET
+                attempts = attempts + 1
+            """,
+            (pid, day_key, boss_id),
+        )
+        self.conn.commit()
+
+    def record_raid_clear(self, pid: str, day_key: str, boss_id: str, season_id: int) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO player_raids (player_id, day_key, boss_id, attempts, clears)
+            VALUES (?, ?, ?, 0, 1)
+            ON CONFLICT(player_id, day_key, boss_id) DO UPDATE SET
+                clears = clears + 1
+            """,
+            (pid, day_key, boss_id),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO player_raid_clears (player_id, season_id, boss_id, clears, last_clear_at)
+            VALUES (?, ?, ?, 1, ?)
+            ON CONFLICT(player_id, season_id, boss_id) DO UPDATE SET
+                clears = clears + 1,
+                last_clear_at = excluded.last_clear_at
+            """,
+            (pid, season_id, boss_id, _now()),
+        )
+        self.conn.commit()
+
+    def season_raid_clears(self, pid: str, season_id: int, boss_id: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT clears FROM player_raid_clears
+            WHERE player_id = ? AND season_id = ? AND boss_id = ?
+            """,
+            (pid, season_id, boss_id),
+        ).fetchone()
+        return int(row["clears"]) if row else 0
+
     # --- seasons ---
 
     def get_active_season(self) -> dict | None:
@@ -709,6 +788,7 @@ class ArenaStore:
     def player_public(self, pid: str, season_id: int | None = None) -> dict | None:
         from relics import catalog_public, relic_public
         from quests import DAILY_QUESTS, dailies_payload, utc_day_key
+        from raids import DAILY_RAID_ATTEMPTS, boss_for_season, boss_public
 
         p = self.get_player_by_id(pid)
         if not p:
@@ -718,6 +798,15 @@ class ArenaStore:
         day = utc_day_key()
         rows = self.ensure_daily_quests(pid, day, [q["id"] for q in DAILY_QUESTS])
         qp = int(p.get("quest_points") or 0)
+        # Seasonal raid card
+        sid = season_id
+        if sid is None:
+            active = self.get_active_season()
+            sid = active["id"] if active else 1
+        boss = boss_for_season(sid)
+        day_row = self.get_raid_day(pid, day, boss["id"])
+        attempts_left = max(0, DAILY_RAID_ATTEMPTS - int(day_row["attempts"]))
+        clears = self.season_raid_clears(pid, sid, boss["id"])
         out = {
             "id": p["id"],
             "nickname": p["nickname"],
@@ -731,6 +820,7 @@ class ArenaStore:
             "relics": catalog_public(owned, equipped),
             "questPoints": qp,
             "dailies": dailies_payload(rows, qp),
+            "raid": boss_public(boss, attempts_left=attempts_left, clears=clears),
         }
         if season_id is not None:
             sp = self.player_season_stats(season_id, pid)

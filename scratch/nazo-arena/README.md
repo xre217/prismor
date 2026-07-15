@@ -115,6 +115,15 @@ Online members of the same house form an **alliance bond** during wars:
 
 Each house ally can press **Alliance Assist** once per duel to heal the active fighter (+6 HP).
 
+## Season raids
+
+Each season features a **3-phase boss** (Basilisk / Sphinx / Owlery Storm, rotating).
+
+- Pick 3 fighters from your house (order = phase order)
+- Mastery + equipped relic apply
+- **3 attempts per UTC day**
+- Clear rewards: quest points, mastery XP, chance at a relic drop
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

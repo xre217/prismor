@@ -30,7 +30,7 @@
         <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply. Online allies form alliance bonds and can Assist once per duel.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
-        <li><strong>Progress</strong> — seasons, relics, territories, daily quests, war replays, fighter mastery, and captain boards save across sessions.</li>
+        <li><strong>Progress</strong> — seasons, relics, territories, daily quests, raids, war replays, fighter mastery, and captain boards save across sessions.</li>
       </ul>
       <button id="btn-how-back" class="btn ghost">Back</button>
     </section>
@@ -59,6 +59,7 @@
       <div id="season-banner" class="season-banner"></div>
       <div id="player-stats"></div>
       <div id="quest-panel" class="quest-panel"></div>
+      <div id="raid-panel" class="raid-panel"></div>
       <div id="relic-panel" class="relic-panel"></div>
       <div id="territory-panel" class="territory-panel"></div>
       <div id="guild-panel"></div>
@@ -90,6 +91,16 @@
         <button id="btn-replay-next" class="btn ghost">Next ▶</button>
       </div>
       <button id="btn-replay-back" class="btn ghost">Back to Guild Hall</button>
+    </section>
+
+    <!-- Raid pick (seasonal boss) -->
+    <section id="screen-raid-pick" class="screen">
+      <h2>Season Raid</h2>
+      <p id="raid-boss-banner" class="raid-boss-banner">—</p>
+      <p id="raid-pick-status" class="muted">Pick 3 house fighters for the gauntlet.</p>
+      <div id="raid-pick-pool" class="draft-pool"></div>
+      <div id="raid-pick-roster" class="roster"></div>
+      <button id="btn-raid-abort" class="btn ghost">Abort Raid</button>
     </section>
 
     <!-- War opponent intro (looks like a real guild) -->

@@ -74,6 +74,12 @@ from alliances import (
     bond_for_count,
     bond_public,
 )
+from raids import (
+    DAILY_RAID_ATTEMPTS,
+    boss_for_season,
+    boss_public,
+    phase_as_fighter,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -190,6 +196,18 @@ def leaderboard_payload() -> dict:
     }
 
 
+def raid_info_for_player(pid: str | None) -> dict:
+    season = current_season()
+    boss = boss_for_season(season["id"])
+    if not pid:
+        return boss_public(boss, attempts_left=DAILY_RAID_ATTEMPTS, clears=0)
+    day = utc_day_key()
+    day_row = store.get_raid_day(pid, day, boss["id"])
+    attempts_left = max(0, DAILY_RAID_ATTEMPTS - int(day_row["attempts"]))
+    clears = store.season_raid_clears(pid, season["id"], boss["id"])
+    return boss_public(boss, attempts_left=attempts_left, clears=clears)
+
+
 def replays_payload(limit: int = 10, faction_id: str | None = None) -> list[dict]:
     return [replay_summary(r, FACTIONS) for r in store.list_war_replays(limit, faction_id)]
 
@@ -238,6 +256,7 @@ guilds: dict[str, dict] = {}  # guild_id -> guild
 ws_to_player: dict[Any, str] = {}
 queue: list[str] = []  # guild_ids waiting for war
 wars: dict[str, dict] = {}
+raids: dict[str, dict] = {}  # player_id -> active raid
 system_guild_pool: list[str] = []  # unused; kept for compat
 
 
@@ -460,6 +479,8 @@ async def handle_player_disconnect(pid: str) -> None:
     p = players.get(pid)
     if not p:
         return
+    # Drop unfinished raid
+    raids.pop(pid, None)
     gid = p.get("guild_id")
     players[pid]["ws"] = None
     if not gid or gid not in guilds:
@@ -852,6 +873,248 @@ def relic_for_side(war: dict, side: str) -> str | None:
         return rid
     war[key] = None
     return None
+
+
+# --- seasonal raids ---
+
+async def start_raid_for_player(pid: str) -> str | None:
+    """Begin raid pick phase. Returns error message or None."""
+    if pid in raids:
+        return "Already in a raid"
+    gid = players[pid].get("guild_id")
+    if gid and gid in queue:
+        return "Leave the war queue first"
+    if find_war_for_guild(gid or ""):
+        return "Finish your war first"
+    fid = players[pid].get("faction_id")
+    if not fid or fid not in FACTIONS:
+        return "Join a house first"
+    season = current_season()
+    boss = boss_for_season(season["id"])
+    day = utc_day_key()
+    day_row = store.get_raid_day(pid, day, boss["id"])
+    if int(day_row["attempts"]) >= DAILY_RAID_ATTEMPTS:
+        return "No raid attempts left today"
+    store.record_raid_attempt(pid, day, boss["id"])
+    pool = [f["id"] for f in FACTIONS[fid]["fighters"]]
+    raids[pid] = {
+        "id": str(uuid.uuid4()),
+        "player_id": pid,
+        "faction_id": fid,
+        "boss": boss,
+        "phase": "pick",
+        "picks": [],
+        "pool": pool,
+        "phase_index": 0,
+        "duel": None,
+        "season_id": season["id"],
+    }
+    return None
+
+
+async def send_raid_pick_state(pid: str) -> None:
+    raid = raids.get(pid)
+    if not raid:
+        return
+    from factions import ARCHETYPE_BY_ID
+    pool = []
+    for fid in raid["pool"]:
+        if fid in raid["picks"]:
+            continue
+        base = ARCHETYPE_BY_ID.get(fid)
+        if base:
+            pool.append({
+                "id": base["id"],
+                "name": base["name"],
+                "icon": base["icon"],
+                "type": base["type"],
+                "skill": base["skill"],
+                "stats": base["stats"],
+            })
+    picks = []
+    for fid in raid["picks"]:
+        base = ARCHETYPE_BY_ID.get(fid)
+        if base:
+            picks.append({"id": base["id"], "name": base["name"], "icon": base["icon"]})
+    await send_player(pid, {
+        "type": "raid.pick",
+        "raidId": raid["id"],
+        "boss": boss_public(
+            raid["boss"],
+            attempts_left=raid_info_for_player(pid)["attemptsLeft"],
+            clears=raid_info_for_player(pid)["clears"],
+        ),
+        "pool": pool,
+        "picks": picks,
+        "need": 3 - len(raid["picks"]),
+    })
+
+
+async def start_raid_phase(pid: str) -> None:
+    from mastery import apply_mastery
+    from relics import apply_relic_duel_open, apply_relic_to_fighter
+
+    raid = raids.get(pid)
+    if not raid:
+        return
+    idx = raid["phase_index"]
+    boss = raid["boss"]
+    if idx >= len(boss["phases"]):
+        await finish_raid(pid, won=True)
+        return
+
+    fighter_id = raid["picks"][idx]
+    player_f = pick_ids_from_roster([fighter_id])[0]
+    row = store.get_mastery(pid, fighter_id)
+    xp = int(row["xp"]) if row else 0
+    mastery = apply_mastery(player_f, xp)
+    relic_id = store.get_equipped_relic(pid)
+    relic_info = apply_relic_to_fighter(player_f, relic_id, first_pick=(idx == 0))
+
+    phase = boss["phases"][idx]
+    boss_f = phase_as_fighter(phase)
+
+    duel = DuelState(player=player_f, enemy=boss_f)
+    duel.player_hp = player_f["maxHp"]
+    duel.enemy_hp = boss_f["maxHp"]
+    duel.home_faction = raid["faction_id"]
+    duel.away_faction = None
+    duel.home_relic = relic_id
+    duel.away_relic = None
+
+    open_log: list = []
+    apply_relic_duel_open(duel, True, relic_id, open_log)
+    raid["duel"] = duel
+    raid["phase"] = "duel"
+    raid["waiting"] = False
+
+    await send_player(pid, {
+        "type": "raid.duel.start",
+        "raidId": raid["id"],
+        "phaseIndex": idx + 1,
+        "phaseTotal": len(boss["phases"]),
+        "bossName": boss["name"],
+        "yourFighter": player_f,
+        "theirFighter": boss_f,
+        "yourMastery": mastery,
+        "yourRelic": relic_info,
+        "yourTurn": True,
+        "state": duel.snapshot(),
+        "log": open_log,
+    })
+
+
+async def handle_raid_action(pid: str, action: str) -> None:
+    raid = raids.get(pid)
+    if not raid or raid.get("phase") != "duel" or not raid.get("duel"):
+        return
+    if raid.get("waiting"):
+        return
+    raid["waiting"] = True
+    d = raid["duel"]
+    entries = apply_player_action(d, action, is_player_turn=True)
+    await send_player(pid, {
+        "type": "raid.duel.update",
+        "raidId": raid["id"],
+        "log": entries,
+        "state": d.snapshot(),
+        "yourTurn": False,
+        "opponentThinking": True,
+    })
+
+    winner = duel_winner(d)
+    if winner:
+        await resolve_raid_phase(pid, winner == "player")
+        return
+
+    await asyncio.sleep(random.uniform(0.7, 1.6))
+    raid = raids.get(pid)
+    if not raid or not raid.get("duel"):
+        return
+    d = raid["duel"]
+    boss_action = ai_choose_action(d, is_enemy=True)
+    entries2 = apply_player_action(d, boss_action, is_player_turn=False)
+    raid["waiting"] = False
+    await send_player(pid, {
+        "type": "raid.duel.update",
+        "raidId": raid["id"],
+        "log": entries2,
+        "state": d.snapshot(),
+        "yourTurn": True,
+        "opponentThinking": False,
+    })
+    winner = duel_winner(d)
+    if winner:
+        await resolve_raid_phase(pid, winner == "player")
+
+
+async def resolve_raid_phase(pid: str, player_won: bool) -> None:
+    raid = raids.get(pid)
+    if not raid:
+        return
+    idx = raid["phase_index"]
+    fighter_id = raid["picks"][idx]
+    store.add_mastery(pid, fighter_id, xp=6 if player_won else 2, won=player_won)
+    await send_player(pid, {
+        "type": "raid.duel.end",
+        "raidId": raid["id"],
+        "won": player_won,
+        "phaseIndex": idx + 1,
+        "phaseTotal": len(raid["boss"]["phases"]),
+    })
+    if not player_won:
+        await asyncio.sleep(0.9)
+        await finish_raid(pid, won=False)
+        return
+    raid["phase_index"] += 1
+    raid["duel"] = None
+    await asyncio.sleep(1.0)
+    if raid["phase_index"] >= len(raid["boss"]["phases"]):
+        await finish_raid(pid, won=True)
+    else:
+        await start_raid_phase(pid)
+
+
+async def finish_raid(pid: str, *, won: bool) -> None:
+    from relics import relic_public, roll_relic_drop
+
+    raid = raids.pop(pid, None)
+    if not raid:
+        return
+    boss = raid["boss"]
+    rewards = {"qp": 0, "masteryXp": 0, "relic": None}
+    if won:
+        store.record_raid_clear(pid, utc_day_key(), boss["id"], raid["season_id"])
+        rwd = boss.get("rewards") or {}
+        qp = int(rwd.get("qp", 0))
+        if qp:
+            store.add_quest_points(pid, qp)
+            rewards["qp"] = qp
+        mxp = int(rwd.get("mastery_xp", 0))
+        if mxp and raid["picks"]:
+            # Split mastery across picks
+            each = max(1, mxp // len(raid["picks"]))
+            for fid in raid["picks"]:
+                store.add_mastery(pid, fid, xp=each, won=True, record=False)
+            rewards["masteryXp"] = mxp
+        chance = float(rwd.get("relic_roll", 0) or 0)
+        if chance and random.random() < chance:
+            drop = roll_relic_drop(store.player_relic_ids(pid))
+            if drop and store.unlock_relic(pid, drop):
+                rewards["relic"] = relic_public(drop)
+
+    board = leaderboard_payload()
+    stats = store.player_public(pid, season_id=board["season"]["id"])
+    await send_player(pid, {
+        "type": "raid.end",
+        "won": won,
+        "boss": {"id": boss["id"], "name": boss["name"], "icon": boss["icon"]},
+        "rewards": rewards,
+        "stats": stats,
+        "raid": raid_info_for_player(pid),
+        "standings": board["standings"],
+        "season": board["season"],
+    })
 
 
 def mastery_xp_for_side(war: dict, side: str, fighter_id: str) -> int:
@@ -1550,6 +1813,51 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         }))
         return
 
+    if mtype == "raid.start":
+        err = await start_raid_for_player(pid)
+        if err:
+            await ws.send(_json({"type": "error", "message": err}))
+            return
+        await send_raid_pick_state(pid)
+        return
+
+    if mtype == "raid.pick":
+        raid = raids.get(pid)
+        fighter_id = msg.get("fighterId")
+        if not raid or raid.get("phase") != "pick" or not fighter_id:
+            return
+        if fighter_id not in raid["pool"] or fighter_id in raid["picks"]:
+            await ws.send(_json({"type": "error", "message": "Invalid pick"}))
+            return
+        raid["picks"].append(fighter_id)
+        if len(raid["picks"]) >= 3:
+            raid["phase"] = "duel"
+            await start_raid_phase(pid)
+        else:
+            await send_raid_pick_state(pid)
+        return
+
+    if mtype == "raid.action":
+        action = msg.get("action")
+        if action not in ("strike", "guard", "skill", "chaos"):
+            return
+        await handle_raid_action(pid, action)
+        return
+
+    if mtype == "raid.abort":
+        if pid in raids:
+            raids.pop(pid, None)
+            await ws.send(_json({
+                "type": "raid.end",
+                "won": False,
+                "aborted": True,
+                "boss": None,
+                "rewards": {},
+                "raid": raid_info_for_player(pid),
+                "stats": store.player_public(pid, season_id=current_season()["id"]),
+            }))
+        return
+
     if mtype == "quest.claim":
         quest_id = msg.get("questId")
         qdef = QUEST_BY_ID.get(quest_id or "")
@@ -1737,6 +2045,9 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             g["in_war"] = False
         if g.get("in_war"):
             await ws.send(_json({"type": "error", "message": "Already in a war"}))
+            return
+        if pid in raids:
+            await ws.send(_json({"type": "error", "message": "Finish your raid first"}))
             return
         if not online_member_ids(gid) and pid not in g.get("player_ids", []):
             await ws.send(_json({"type": "error", "message": "Rejoin your house first"}))

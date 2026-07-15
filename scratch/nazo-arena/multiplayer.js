@@ -38,6 +38,8 @@
     canAssist: false,
     alliance: null,
     theirAlliance: null,
+    raidMode: false,
+    raidId: null,
     replayView: null,
     replayDuelIdx: 0,
     replayLogIdx: 0,
@@ -153,6 +155,26 @@
         mp.canAssist = false;
         setAssistButton(false);
         setStatus(msg.message || "Assist sent");
+        break;
+      case "raid.pick":
+        mp.raidMode = true;
+        mp.raidId = msg.raidId;
+        renderRaidPick(msg);
+        showScreen("screen-raid-pick");
+        break;
+      case "raid.duel.start":
+        mp.raidMode = true;
+        startRaidDuel(msg);
+        break;
+      case "raid.duel.update":
+        onRaidDuelUpdate(msg);
+        break;
+      case "raid.duel.end":
+        onRaidDuelEnd(msg);
+        break;
+      case "raid.end":
+        if (msg.stats) mp.stats = msg.stats;
+        showRaidResult(msg);
         break;
       case "war.duel.start":
         if (msg.spectator) mp.spectating = true;
@@ -736,10 +758,161 @@
     }, 450);
   }
 
+  function renderRaidPanel() {
+    const el = $("raid-panel");
+    if (!el) return;
+    const r = mp.stats?.raid;
+    if (!r) {
+      el.innerHTML = `<h3>Season Raid</h3><p class="muted">Connect to see the seasonal boss.</p>`;
+      return;
+    }
+    const phases = (r.phasePreview || []).map((p) =>
+      `<span class="raid-phase-chip">${p.icon} ${p.name} · ${p.maxHp} HP</span>`
+    ).join("");
+    el.innerHTML = `
+      <h3>Season Raid · ${r.icon} ${r.name}</h3>
+      <p class="muted">${r.flavor}</p>
+      <div class="raid-phases">${phases}</div>
+      <div class="raid-meta">${r.attemptsLeft}/${r.dailyAttempts} attempts left · ${r.clears} season clears · ${r.rewardDesc}</div>
+      <button type="button" class="btn primary" id="btn-raid-start" ${r.attemptsLeft > 0 ? "" : "disabled"}>
+        ${r.attemptsLeft > 0 ? "Enter Raid" : "No attempts left"}
+      </button>
+    `;
+    const btn = $("btn-raid-start");
+    if (btn && r.attemptsLeft > 0) {
+      btn.addEventListener("click", () => send("raid.start"));
+    }
+  }
+
+  function renderRaidPick(msg) {
+    const boss = msg.boss || {};
+    $("raid-boss-banner").textContent =
+      `${boss.icon || "⚔"} ${boss.name || "Raid"} — pick ${msg.need} more`;
+    $("raid-pick-status").textContent = `Gauntlet of ${boss.phases || 3} phases. Order = duel order.`;
+    const pool = $("raid-pick-pool");
+    pool.innerHTML = "";
+    (msg.pool || []).forEach((f) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "fighter-card";
+      card.innerHTML = `
+        <div class="icon">${f.icon}</div>
+        <div class="cname">${f.name}</div>
+        <div class="ctype">${f.type} · ${f.skill}</div>
+      `;
+      card.addEventListener("click", () => send("raid.pick", { fighterId: f.id }));
+      pool.appendChild(card);
+    });
+    const roster = $("raid-pick-roster");
+    roster.innerHTML = (msg.picks || []).length
+      ? `<h3>Raid roster</h3><div class="roster-tags">${msg.picks.map((p) =>
+          `<span class="roster-tag">${p.icon} ${p.name}</span>`).join("")}</div>`
+      : "";
+  }
+
+  function startRaidDuel(msg) {
+    window.NazoSolo.state.mode = "raid";
+    mp.raidMode = true;
+    mp.yourFighter = msg.yourFighter;
+    mp.theirFighter = msg.theirFighter;
+    mp.yourTurn = true;
+    mp.spectating = false;
+
+    $("tier-label").textContent = `Raid · Phase ${msg.phaseIndex}/${msg.phaseTotal}`;
+    $("score-label").textContent = msg.bossName || "Boss";
+
+    window.NazoSolo.state.active = mp.yourFighter;
+    window.NazoSolo.state.enemy = mp.theirFighter;
+    window.NazoSolo.state.playerHp = msg.state.playerHp;
+    window.NazoSolo.state.enemyHp = msg.state.enemyHp;
+    window.NazoSolo.state.maxHp = msg.state.playerMax;
+
+    $("battle-log").innerHTML = "";
+    $("swap-bar").classList.add("hidden");
+    $("action-bar").style.display = "grid";
+    setAssistButton(false);
+
+    $("player-sprite").textContent = mp.yourFighter.icon;
+    $("player-name").textContent = mp.yourFighter.name;
+    $("enemy-sprite").textContent = mp.theirFighter.icon;
+    $("enemy-name").textContent = mp.theirFighter.name;
+    updateWarUI(msg.state);
+    log(`— Phase ${msg.phaseIndex}: ${mp.yourFighter.name} vs ${mp.theirFighter.name} —`);
+    if (msg.yourMastery && msg.yourMastery.tier > 0) {
+      log(`Mastery — ${msg.yourMastery.tierName}: ${msg.yourMastery.bonusDesc}`, "crit");
+    }
+    if (msg.yourRelic) {
+      log(`Relic — ${msg.yourRelic.icon} ${msg.yourRelic.name}`, "player");
+    }
+    (msg.log || []).forEach((e) => log(e.msg, e.cls));
+    showBattlePassive(mp.guild?.factionId);
+    showAllianceBanner(null);
+    showMasteryBanner(msg.yourMastery);
+    showRelicBanner(msg.yourRelic);
+    showIntel(null);
+    setWarActions(true);
+    showScreen("screen-battle");
+  }
+
+  function onRaidDuelUpdate(msg) {
+    (msg.log || []).forEach((e) => log(e.msg, e.cls));
+    updateWarUI(msg.state);
+    window.NazoSolo.state.playerHp = msg.state.playerHp;
+    window.NazoSolo.state.enemyHp = msg.state.enemyHp;
+    if (msg.opponentThinking) {
+      setWarActions(false);
+      log("Boss is acting...", "system");
+    } else {
+      setWarActions(!!msg.yourTurn);
+    }
+  }
+
+  function onRaidDuelEnd(msg) {
+    setWarActions(false);
+    log(
+      msg.won
+        ? `✦ Phase ${msg.phaseIndex} cleared!`
+        : `☠ Fallen at phase ${msg.phaseIndex}`,
+      msg.won ? "crit" : "enemy"
+    );
+  }
+
+  function showRaidResult(msg) {
+    mp.raidMode = false;
+    mp.raidId = null;
+    setWarActions(false);
+    setAssistButton(false);
+    if (msg.stats) mp.stats = msg.stats;
+    renderGuildHall();
+    if (msg.aborted) {
+      setStatus("Raid aborted");
+      showScreen("screen-guild");
+      return;
+    }
+    const boss = msg.boss || {};
+    $("result-art").textContent = msg.won ? (boss.icon || "🏆") : "💀";
+    $("result-title").textContent = msg.won ? "Raid Cleared" : "Raid Failed";
+    let body = msg.won
+      ? `You cleared ${boss.icon || ""} ${boss.name || "the raid"}.`
+      : `The ${boss.name || "boss"} stands. Try again tomorrow if attempts remain.`;
+    const r = msg.rewards || {};
+    if (msg.won) {
+      if (r.qp) body += ` +${r.qp} QP.`;
+      if (r.masteryXp) body += ` +${r.masteryXp} mastery.`;
+      if (r.relic) body += ` Relic: ${r.relic.icon} ${r.relic.name}.`;
+    }
+    $("result-body").textContent = body;
+    $("btn-replay").classList.add("hidden");
+    $("btn-result-guild").classList.remove("hidden");
+    setStatus(msg.won ? "Raid cleared" : "Raid failed");
+    showScreen("screen-result");
+  }
+
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
     renderQuestPanel();
+    renderRaidPanel();
     renderRelicPanel();
     renderTerritoryMap();
     renderReplayPanel();
@@ -1110,7 +1283,13 @@
   }
 
   function sendAction(action) {
-    if (mp.spectating || !mp.yourTurn || !mp.warId) return;
+    if (mp.spectating || !mp.yourTurn) return;
+    if (mp.raidMode) {
+      setWarActions(false);
+      send("raid.action", { action });
+      return;
+    }
+    if (!mp.warId) return;
     setWarActions(false);
     send("war.action", { warId: mp.warId, action });
   }
@@ -1206,6 +1385,7 @@
     mp.canAssist = false;
     setAssistButton(false);
   });
+  $("btn-raid-abort").addEventListener("click", () => send("raid.abort"));
   $("btn-war-intro-go").addEventListener("click", startWarDraft);
   $("btn-result-guild").addEventListener("click", () => {
     $("btn-replay").classList.remove("hidden");
