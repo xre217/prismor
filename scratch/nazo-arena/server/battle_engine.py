@@ -264,7 +264,7 @@ def apply_player_action(state: DuelState, action: str, is_player_turn: bool) -> 
                 if eff.get("chaos_burn_always") or random.random() < burn_chance:
                     apply_status(state, "burn", not is_player_turn, 2, entries, source="Chaos")
         elif outcome < 0.7:
-            d = random.randint(8, 22)
+            d = random.randint(6, 18)
             if is_player_turn:
                 state.player_hp -= d
                 entries.append(state.add_log(f"Chaos backfire! {d} self-damage", "enemy"))

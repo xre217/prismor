@@ -17,8 +17,8 @@ ALLIANCE_BONDS: dict[int, dict[str, Any]] = {
         "tier": 2,
         "name": "Duo Bond",
         "icon": "🤝",
-        "desc": "+3 HP · open Regen on duel 1.",
-        "effects": {"max_hp": 3, "regen_open": True},
+        "desc": "+4 HP · open Regen on duel 1.",
+        "effects": {"max_hp": 4, "regen_open": True},
     },
     3: {
         "tier": 3,
@@ -36,7 +36,7 @@ ALLIANCE_BONDS: dict[int, dict[str, Any]] = {
     },
 }
 
-ASSIST_HEAL = 6
+ASSIST_HEAL = 8
 
 
 def bond_for_count(n: int) -> dict[str, Any]:

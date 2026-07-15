@@ -33,6 +33,7 @@
     replays: [],
     liveWars: [],
     boardTab: "houses",
+    hallTab: "progress",
     contestTerritoryId: null,
     spectating: false,
     canAssist: false,
@@ -126,11 +127,19 @@
         setStatus(msg.message);
         $("btn-war-queue").disabled = true;
         $("btn-war-cancel").classList.remove("hidden");
+        {
+          const hint = $("queue-hint");
+          if (hint) hint.textContent = msg.message || "Searching for a rival…";
+        }
         break;
       case "war.unqueued":
         $("btn-war-queue").disabled = false;
         $("btn-war-cancel").classList.add("hidden");
         setStatus("Queue cancelled");
+        {
+          const hint = $("queue-hint");
+          if (hint) hint.textContent = "Optional: open Map tab, pick a region, then queue.";
+        }
         break;
       case "war.matched":
         mp.warId = msg.warId;
@@ -594,8 +603,16 @@
         if (mp.contestTerritoryId) {
           const t = list.find((x) => x.id === id);
           setStatus(`Ready to contest ${t?.icon || ""} ${t?.name || id}`);
+          const qBtn = $("btn-war-queue");
+          if (qBtn) qBtn.textContent = `Contest ${t?.icon || ""} ${t?.name || id}`;
+          const hint = $("queue-hint");
+          if (hint) hint.textContent = `Selected ${t?.name || id} — tap Queue below (or switch to Progress).`;
         } else {
           setStatus("Open war queue (no territory)");
+          const qBtn = $("btn-war-queue");
+          if (qBtn) qBtn.textContent = "Queue House War";
+          const hint = $("queue-hint");
+          if (hint) hint.textContent = "Optional: pick a region, then queue.";
         }
       });
     });
@@ -673,9 +690,10 @@
     $("replay-header").textContent =
       `${home.crest || ""} ${home.house || replay.homeFaction} ${replay.homeScore}–${replay.awayScore} ${away.house || replay.awayFaction} ${away.crest || ""}`;
     const draft = replay.draft || {};
+    const fmt = (ids) => (ids || []).map(fighterLabel).join(", ") || "—";
     $("replay-draft").innerHTML = `
-      <div>Home bans: ${(draft.homeBans || []).join(", ") || "—"} · picks: ${(draft.homePicks || []).join(", ") || "—"}</div>
-      <div>Away bans: ${(draft.awayBans || []).join(", ") || "—"} · picks: ${(draft.awayPicks || []).join(", ") || "—"}</div>
+      <div>Home bans: ${fmt(draft.homeBans)} · picks: ${fmt(draft.homePicks)}</div>
+      <div>Away bans: ${fmt(draft.awayBans)} · picks: ${fmt(draft.awayPicks)}</div>
       ${replay.territory ? `<div>Territory: ${replay.territory.icon} ${replay.territory.name}</div>` : ""}
     `;
     const tabs = $("replay-duel-tabs");
@@ -869,6 +887,11 @@
 
   function onRaidDuelEnd(msg) {
     setWarActions(false);
+    pulseScore();
+    setTurnBanner(
+      msg.won ? `Phase ${msg.phaseIndex} cleared` : `Fallen at phase ${msg.phaseIndex}`,
+      msg.won ? "yours" : "wait"
+    );
     log(
       msg.won
         ? `✦ Phase ${msg.phaseIndex} cleared!`
@@ -908,6 +931,44 @@
     showScreen("screen-result");
   }
 
+  function setHallTab(tab) {
+    mp.hallTab = tab;
+    document.querySelectorAll(".hall-tab").forEach((b) => {
+      b.classList.toggle("active", b.dataset.hall === tab);
+    });
+    ["progress", "map", "boards", "wars"].forEach((id) => {
+      const pane = $(`hall-${id}`);
+      if (pane) pane.classList.toggle("active", id === tab);
+    });
+  }
+
+  function fighterLabel(id) {
+    const all = window.NazoData.ALL_FIGHTERS || [];
+    const f = all.find((x) => x.id === id);
+    return f ? `${f.icon || ""} ${f.name}` : id;
+  }
+
+  function setTurnBanner(text, kind) {
+    const el = $("turn-banner");
+    if (!el) return;
+    if (!text) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.textContent = text;
+    el.className = `turn-banner ${kind || ""}`;
+    el.classList.remove("hidden");
+  }
+
+  function pulseScore() {
+    const el = $("score-label");
+    if (!el) return;
+    el.classList.remove("score-pulse");
+    void el.offsetWidth;
+    el.classList.add("score-pulse");
+  }
+
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
@@ -916,6 +977,7 @@
     renderRelicPanel();
     renderTerritoryMap();
     renderReplayPanel();
+    setHallTab(mp.hallTab || "progress");
     const g = mp.guild;
     if (!g) {
       $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
@@ -946,11 +1008,17 @@
       <div class="member-list">${g.members.map((m) =>
         `<div class="member-row"><span>${m.name}</span><span class="role">${m.role}</span><span class="seen">${m.lastSeen}</span></div>`
       ).join("")}</div>
-      <p class="muted">More house members online → stronger alliance bonds in wars. Each ally can Assist once per duel (+6 HP).</p>
+      ${bond && bond.tier >= 2 ? `<p class="muted tip">Online allies can Assist once per duel (+8 HP).</p>` : ""}
     `;
     const qBtn = $("btn-war-queue");
     qBtn.disabled = false;
     qBtn.textContent = contestHint;
+    const hint = $("queue-hint");
+    if (hint && $("btn-war-cancel").classList.contains("hidden")) {
+      hint.textContent = mp.contestTerritoryId
+        ? "Ready to contest — tap Queue."
+        : "Optional: open Map tab, pick a region, then queue.";
+    }
   }
 
   async function login() {
@@ -1192,7 +1260,7 @@
     const n = Math.max(1, (g.members || []).length);
     const tiers = {
       1: { tier: 1, name: "Lone Wolf", icon: "🐺", desc: "Fighting alone — no alliance bonus.", count: n },
-      2: { tier: 2, name: "Duo Bond", icon: "🤝", desc: "+3 HP · open Regen on duel 1.", count: n },
+      2: { tier: 2, name: "Duo Bond", icon: "🤝", desc: "+4 HP · open Regen on duel 1.", count: n },
       3: { tier: 3, name: "Trio Bond", icon: "🔗", desc: "+5 HP · +1 Shield · open Focus on duel 1.", count: n },
       4: { tier: 4, name: "House United", icon: "🏛", desc: "+8 HP · +1 Power · +6% damage · open Focus.", count: n },
     };
@@ -1249,6 +1317,15 @@
     if (mp.spectating) on = false;
     document.querySelectorAll("#action-bar .btn.action").forEach((b) => { b.disabled = !on; });
     mp.yourTurn = on;
+    if (mp.spectating) {
+      setTurnBanner("Spectating — watch only", "spec");
+    } else if (on) {
+      setTurnBanner("Your turn — choose an action", "yours");
+    } else if (mp.warId || mp.raidMode) {
+      setTurnBanner(mp.raidMode ? "Boss is acting…" : "Opponent is thinking…", "wait");
+    } else {
+      setTurnBanner(null);
+    }
   }
 
   function onDuelUpdate(msg) {
@@ -1271,9 +1348,14 @@
 
   function onDuelEnd(msg) {
     setWarActions(false);
+    pulseScore();
     $("score-label").textContent = mp.spectating
       ? `${msg.yourScore} — ${msg.theirScore}`
       : `You ${msg.yourScore} — ${msg.theirScore} Them`;
+    setTurnBanner(
+      msg.won ? `Duel ${msg.duelIndex} won` : `Duel ${msg.duelIndex} lost`,
+      msg.won ? "yours" : "wait"
+    );
     log(
       msg.won
         ? `✦ Duel ${msg.duelIndex} won! Score ${msg.yourScore}–${msg.theirScore}`
@@ -1379,6 +1461,9 @@
   });
   $("btn-war-queue").addEventListener("click", queueWar);
   $("btn-war-cancel").addEventListener("click", cancelQueue);
+  document.querySelectorAll(".hall-tab").forEach((btn) => {
+    btn.addEventListener("click", () => setHallTab(btn.dataset.hall));
+  });
   $("btn-war-assist").addEventListener("click", () => {
     if (!mp.canAssist || !mp.warId || mp.spectating) return;
     send("war.assist", { warId: mp.warId });

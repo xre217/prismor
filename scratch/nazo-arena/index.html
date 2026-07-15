@@ -19,6 +19,7 @@
       <p class="tagline">Solo campaign or guild wars. Rivals look real — always.</p>
       <button id="btn-start" class="btn primary">Solo — Open the Box</button>
       <button id="btn-mp" class="btn primary alt">Guild Wars — Multiplayer</button>
+      <p class="title-hint muted">Server required for guild wars · <code>python3 server/server.py</code></p>
       <button id="btn-how" class="btn ghost">How it works</button>
     </section>
 
@@ -57,17 +58,32 @@
       <h2>Guild Hall</h2>
       <p id="guild-status" class="mp-status ok">Online</p>
       <div id="season-banner" class="season-banner"></div>
-      <div id="player-stats"></div>
-      <div id="quest-panel" class="quest-panel"></div>
-      <div id="raid-panel" class="raid-panel"></div>
-      <div id="relic-panel" class="relic-panel"></div>
-      <div id="territory-panel" class="territory-panel"></div>
       <div id="guild-panel"></div>
-      <div id="standings-panel" class="standings-panel"></div>
-      <div id="replay-panel" class="replay-panel"></div>
-      <div class="guild-actions">
+      <div class="guild-actions sticky-actions">
         <button id="btn-war-queue" class="btn primary" disabled>Queue House War</button>
         <button id="btn-war-cancel" class="btn ghost hidden">Cancel Queue</button>
+        <p id="queue-hint" class="queue-hint muted">Optional: open Map tab, pick a region, then queue.</p>
+      </div>
+      <div class="hall-tabs" id="hall-tabs">
+        <button type="button" class="hall-tab active" data-hall="progress">Progress</button>
+        <button type="button" class="hall-tab" data-hall="map">Map</button>
+        <button type="button" class="hall-tab" data-hall="boards">Boards</button>
+        <button type="button" class="hall-tab" data-hall="wars">Wars</button>
+      </div>
+      <div id="hall-progress" class="hall-pane active">
+        <div id="player-stats"></div>
+        <div id="quest-panel" class="quest-panel"></div>
+        <div id="raid-panel" class="raid-panel"></div>
+        <div id="relic-panel" class="relic-panel"></div>
+      </div>
+      <div id="hall-map" class="hall-pane">
+        <div id="territory-panel" class="territory-panel"></div>
+      </div>
+      <div id="hall-boards" class="hall-pane">
+        <div id="standings-panel" class="standings-panel"></div>
+      </div>
+      <div id="hall-wars" class="hall-pane">
+        <div id="replay-panel" class="replay-panel"></div>
       </div>
       <button id="btn-leave-house" class="btn ghost">Leave House</button>
       <button id="btn-guild-back" class="btn ghost">Back</button>
@@ -159,6 +175,7 @@
         <span id="tier-label">Tier 1</span>
         <span id="score-label">Wins: 0</span>
       </div>
+      <p id="turn-banner" class="turn-banner hidden">Your turn</p>
       <p id="battle-passive" class="battle-passive hidden"></p>
       <p id="battle-alliance" class="battle-alliance hidden"></p>
       <p id="battle-mastery" class="battle-mastery hidden"></p>
@@ -188,7 +205,7 @@
         <button class="btn action" data-action="skill">✦ Skill</button>
         <button class="btn action" data-action="chaos">☠ Chaos</button>
       </div>
-      <button id="btn-war-assist" class="btn primary alt hidden" type="button">🤝 Alliance Assist (+6 HP)</button>
+      <button id="btn-war-assist" class="btn primary alt hidden" type="button">🤝 Alliance Assist (+8 HP)</button>
       <div id="swap-bar" class="swap hidden">
         <p>Fighter down! Send the next one:</p>
         <div id="swap-options" class="card-row small"></div>

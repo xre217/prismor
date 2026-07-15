@@ -109,11 +109,11 @@ Online members of the same house form an **alliance bond** during wars:
 | Online | Bond | Effect |
 |--------|------|--------|
 | 1 | Lone Wolf | — |
-| 2 | Duo Bond | +3 HP · open Regen (duel 1) |
+| 2 | Duo Bond | +4 HP · open Regen (duel 1) |
 | 3 | Trio Bond | +5 HP · +1 Shield · open Focus (duel 1) |
 | 4+ | House United | +8 HP · +1 Power · +6% damage · open Focus |
 
-Each house ally can press **Alliance Assist** once per duel to heal the active fighter (+6 HP).
+Each house ally can press **Alliance Assist** once per duel to heal the active fighter (+8 HP).
 
 ## Season raids
 
@@ -163,6 +163,10 @@ XP on each fighter unlocks combat bonuses in guild wars:
 | Legend | 120 | +2 Power, +1 Speed/Mind/Luck/Shield, +12 HP |
 
 Earn XP by drafting and winning duels (+8 per duel win, +3 loss) plus a small war roster bonus. System rivals scale fake mastery with ELO.
+
+## Polish notes
+
+Guild hall uses **Progress / Map / Boards / Wars** tabs so quests, territory contest, standings, and replays stay out of each other’s way. Queue actions stick to the top of the hall; battle shows a turn banner and score pulse on duel/raid phase end. Chaos backfire is softer (6–18). Raid final-phase HP is slightly lower. Mobile: 2-column territory map, sticky action bar.
 
 ## Persistence
 

@@ -401,6 +401,90 @@ header h1 {
 .invite code { color: var(--gold); letter-spacing: 0.1em; }
 
 .guild-actions { margin: 1rem 0; }
+
+.guild-actions.sticky-actions {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.65rem 0.55rem 0.55rem;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+
+.queue-hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.hall-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.hall-tab {
+  flex: 1 1 auto;
+  min-width: 4.5rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+}
+
+.hall-tab.active {
+  color: var(--gold);
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+
+.hall-pane { display: none; }
+.hall-pane.active { display: block; }
+
+.turn-banner {
+  text-align: center;
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  margin: 0.35rem 0 0.65rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+}
+
+.turn-banner.yours {
+  color: var(--accent2);
+  border-color: var(--accent2);
+}
+
+.turn-banner.wait {
+  color: var(--muted);
+}
+
+.turn-banner.spec {
+  color: var(--gold);
+  border-style: dashed;
+}
+
+@keyframes score-pulse-kf {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.12); color: var(--gold); }
+  100% { transform: scale(1); }
+}
+
+.score-pulse {
+  display: inline-block;
+  animation: score-pulse-kf 0.55s ease;
+}
 .guild-form { margin: 0.75rem 0; font-size: 0.8rem; color: var(--muted); }
 .guild-form summary { cursor: pointer; color: var(--accent2); margin-bottom: 0.5rem; }
 
@@ -993,12 +1077,35 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
 
 @media (max-width: 640px) {
   .territory-map {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
   }
   .territory-cell {
     grid-row: auto !important;
     grid-column: auto !important;
+    min-height: 4.2rem;
+    padding: 0.4rem 0.35rem;
   }
+  .territory-cell .t-bonus { display: none; }
+
+  .hall-tab { font-size: 0.65rem; padding: 0.4rem 0.35rem; }
+
+  #action-bar.actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    padding: 0.5rem 0 0.25rem;
+    background: linear-gradient(to top, var(--bg) 70%, transparent);
+  }
+
+  .btn.action { padding: 0.85rem 0.5rem; font-size: 0.85rem; }
+
+  #btn-war-assist {
+    width: 100%;
+    margin-top: 0.45rem;
+  }
+
+  .log { height: 110px; font-size: 0.68rem; }
 }
 
 .status-row {
