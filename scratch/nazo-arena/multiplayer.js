@@ -8,6 +8,7 @@
   const mp = {
     ws: null,
     playerId: null,
+    token: localStorage.getItem("nazo-arena-token") || null,
     nickname: "",
     guild: null,
     inviteCode: null,
@@ -22,6 +23,8 @@
     yourTurn: false,
     connected: false,
     factions: [],
+    stats: null,
+    standings: [],
   };
 
   function send(type, payload = {}) {
@@ -51,9 +54,14 @@
     switch (msg.type) {
       case "auth.ok":
         mp.playerId = msg.playerId;
+        mp.token = msg.token;
         mp.nickname = msg.nickname;
         mp.guild = msg.guild;
+        mp.stats = msg.stats || null;
+        mp.standings = msg.standings || [];
         mp.factions = msg.factions || Object.values(window.NazoData.FACTIONS || {});
+        if (msg.token) localStorage.setItem("nazo-arena-token", msg.token);
+        if (msg.restored) setStatus("Welcome back");
         if (mp.guild) {
           applyHouseTheme(mp.guild.factionId);
           renderGuildHall();
@@ -66,6 +74,8 @@
       case "guild.updated":
         mp.guild = msg.guild;
         if (msg.inviteCode) mp.inviteCode = msg.inviteCode;
+        if (msg.stats) mp.stats = msg.stats;
+        if (msg.standings) mp.standings = msg.standings;
         if (mp.guild) applyHouseTheme(mp.guild.factionId);
         renderGuildHall();
         if (mp.guild) showScreen("screen-guild");
@@ -101,6 +111,8 @@
         onDuelUpdate(msg);
         break;
       case "war.end":
+        if (msg.stats) mp.stats = msg.stats;
+        if (msg.standings) mp.standings = msg.standings;
         showWarResult(msg);
         break;
     }
@@ -146,7 +158,54 @@
     });
   }
 
+  function renderStandings() {
+    const el = $("standings-panel");
+    if (!el || !mp.standings.length) {
+      if (el) el.innerHTML = "";
+      return;
+    }
+    el.innerHTML = `
+      <h3>House Standings</h3>
+      <div class="standings-table">
+        ${mp.standings.map((s) => `
+          <div class="standings-row">
+            <span class="rank">#${s.rank}</span>
+            <span class="crest">${s.crest}</span>
+            <span class="house">${s.house}</span>
+            <span class="elo">${s.elo} ELO</span>
+            <span class="record">${s.wins}W ${s.losses}L</span>
+            <span class="members">${s.members} enlisted</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderPlayerStats() {
+    const el = $("player-stats");
+    if (!el) return;
+    const s = mp.stats;
+    if (!s) {
+      el.innerHTML = "";
+      return;
+    }
+    const mastery = (s.mastery || []).slice(0, 4).map((m) => {
+      const f = (window.NazoData.ALL_FIGHTERS || []).find((x) => x.id === m.fighter_id);
+      const name = f ? f.name : m.fighter_id;
+      return `<span class="mastery-chip">${name} · ${m.xp} XP</span>`;
+    }).join("");
+    el.innerHTML = `
+      <div class="player-stats">
+        <div class="stat-line"><strong>${s.nickname || mp.nickname}</strong></div>
+        <div class="stat-line">Wars ${s.warsWon}W ${s.warsLost}L · Duels ${s.duelsWon}W ${s.duelsLost}L</div>
+        ${mastery ? `<div class="mastery-row">${mastery}</div>` : ""}
+      </div>
+    `;
+  }
+
   function renderGuildHall() {
+    renderStandings();
+    renderPlayerStats();
     const g = mp.guild;
     if (!g) {
       $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
@@ -179,7 +238,7 @@
     setStatus("Connecting...");
     try {
       await connect();
-      send("auth", { nickname: nick });
+      send("auth", { nickname: nick, token: mp.token });
       setStatus("Online");
     } catch (e) {
       setStatus(e.message + " — start server: python3 server/server.py", false);

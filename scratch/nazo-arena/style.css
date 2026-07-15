@@ -518,6 +518,60 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
   color: var(--muted);
 }
 
+.player-stats {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.75rem;
+}
+
+.player-stats .stat-line { margin: 0.2rem 0; color: var(--muted); }
+.player-stats strong { color: var(--text); }
+
+.mastery-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.mastery-chip {
+  font-size: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.45rem;
+  color: var(--gold);
+}
+
+.standings-panel {
+  margin: 1rem 0;
+  font-size: 0.7rem;
+}
+
+.standings-panel h3 {
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent2);
+}
+
+.standings-table { display: grid; gap: 0.35rem; }
+
+.standings-row {
+  display: grid;
+  grid-template-columns: 2rem 1.5rem 1fr auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+}
+
+.standings-row .rank { color: var(--gold); font-weight: 700; }
+.standings-row .elo { color: var(--accent2); }
+.standings-row .record, .standings-row .members { color: var(--muted); }
+
 @media (min-width: 520px) {
   .house-grid { grid-template-columns: 1fr 1fr; }
   .card-row:not(.small) { flex-direction: row; }

@@ -47,12 +47,20 @@ python3 -m http.server 8080         # terminal 2
 
 When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
+## Persistence
+
+Guild war results, house ELO, player records, and fighter mastery are stored in SQLite at `data/nazo-arena.db` (override with `NAZO_ARENA_DB`).
+
+On connect, your account token is saved in browser `localStorage` so wars won and house allegiance survive refresh.
+
 ## Layout
 
 ```
 scratch/nazo-arena/
+├── data/                # SQLite (gitignored)
 ├── factions.js          # House data + fighters (client)
 ├── server/factions.py   # Same four houses (server)
+├── server/store.py      # SQLite persistence
 ├── server/server.py     # WebSocket + matchmaking
 └── ...
 ```

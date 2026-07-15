@@ -22,6 +22,7 @@ from system_guilds import (
     spawn_system_guild,
     system_pick_fighter_ids,
 )
+from store import ArenaStore
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -39,7 +40,8 @@ def _json(obj: dict) -> str:
 
 # --- in-memory state ---
 
-players: dict[str, dict] = {}  # player_id -> {ws, nickname, guild_id}
+store: ArenaStore
+players: dict[str, dict] = {}  # account_id -> {ws, nickname, guild_id, token}
 guilds: dict[str, dict] = {}  # guild_id -> guild
 ws_to_player: dict[Any, str] = {}
 queue: list[str] = []  # guild_ids waiting for war
@@ -48,8 +50,10 @@ system_guild_pool: list[str] = []  # unused; kept for compat
 
 
 def init_faction_guilds() -> None:
-    """Four house guilds — players join one."""
+    """Four house guilds — load ELO/wins/losses from SQLite."""
+    store.ensure_factions(list(FACTIONS.keys()))
     for fid, fac in FACTIONS.items():
+        row = store.get_faction(fid) or {"elo": 1000, "wins": 0, "losses": 0}
         gid = f"faction-{fid}"
         guilds[gid] = {
             "id": gid,
@@ -57,9 +61,9 @@ def init_faction_guilds() -> None:
             "tag": fac["tag"],
             "crest": fac["crest"],
             "faction_id": fid,
-            "elo": 1000,
-            "wins": 0,
-            "losses": 0,
+            "elo": row["elo"],
+            "wins": row["wins"],
+            "losses": row["losses"],
             "members": [],
             "motd": fac.get("motd", ""),
             "is_system": False,
@@ -69,6 +73,31 @@ def init_faction_guilds() -> None:
             "queued": False,
             "in_war": False,
         }
+
+
+def _faction_member_count(fid: str) -> int:
+    row = store.conn.execute(
+        "SELECT COUNT(*) AS c FROM players WHERE faction_id = ?", (fid,)
+    ).fetchone()
+    return int(row["c"]) if row else 0
+
+
+def standings_public() -> list[dict]:
+    rows = store.faction_standings()
+    out = []
+    for i, row in enumerate(rows):
+        fac = FACTIONS.get(row["id"], {})
+        out.append({
+            "rank": i + 1,
+            "factionId": row["id"],
+            "house": fac.get("house", row["id"]),
+            "crest": fac.get("crest", ""),
+            "elo": row["elo"],
+            "wins": row["wins"],
+            "losses": row["losses"],
+            "members": _faction_member_count(row["id"]),
+        })
+    return out
 
 
 def factions_public() -> list[dict]:
@@ -85,8 +114,8 @@ def factions_public() -> list[dict]:
             "tag": fac["tag"],
             "crest": fac["crest"],
             "motd": fac.get("motd", ""),
-            "members": len(g.get("player_ids", [])),
-            "elo": g.get("elo", 1000),
+            "members": _faction_member_count(fid),
+            "elo": g.get("elo", row["elo"] if (row := store.get_faction(fid)) else 1000),
             "fighters": [f["name"] for f in fac["fighters"]],
             "passiveName": pas.get("name", ""),
             "passiveDesc": pas.get("desc", ""),
@@ -123,7 +152,7 @@ def player_public(pid: str) -> dict | None:
 def join_faction(player_id: str, faction_id: str) -> dict | None:
     if faction_id not in FACTIONS:
         return None
-    leave_guild(player_id)
+    leave_guild(player_id, persist=False)
     gid = f"faction-{faction_id}"
     g = guilds[gid]
     p = players[player_id]
@@ -133,10 +162,12 @@ def join_faction(player_id: str, faction_id: str) -> dict | None:
             "name": p["nickname"], "role": "fighter", "lastSeen": "online", "playerId": player_id,
         })
     p["guild_id"] = gid
+    p["faction_id"] = faction_id
+    store.set_player_faction(player_id, faction_id)
     return g
 
 
-def leave_guild(player_id: str) -> None:
+def leave_guild(player_id: str, *, persist: bool = True) -> None:
     gid = players[player_id].get("guild_id")
     if not gid or gid not in guilds:
         return
@@ -144,7 +175,10 @@ def leave_guild(player_id: str) -> None:
     if g.get("is_faction"):
         g["player_ids"] = [x for x in g["player_ids"] if x != player_id]
         g["members"] = [m for m in g["members"] if m.get("playerId") != player_id]
+        if persist:
+            store.set_player_faction(player_id, None)
     players[player_id]["guild_id"] = None
+    players[player_id]["faction_id"] = None
 
 
 def create_guild(player_id: str, name: str, tag: str) -> dict:
@@ -245,6 +279,8 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "phase": "pick",
         "home_picks": None,
         "away_picks": None,
+        "home_picker_pid": None,
+        "away_picker_pid": None,
         "home_score": 0,
         "away_score": 0,
         "duel_index": 0,
@@ -509,8 +545,14 @@ async def finish_war(war_id: str) -> None:
     away = guilds[war["away_id"]]
     home_won = war["home_score"] > war["away_score"]
     away_won = war["away_score"] > war["home_score"]
+    if war["home_score"] == war["away_score"]:
+        home_won = random.choice([True, False])
+        away_won = not home_won
 
-    for g, won in ((home, home_won), (away, away_won)):
+    for g, won, fid in (
+        (home, home_won, home.get("faction_id")),
+        (away, away_won, away.get("faction_id")),
+    ):
         g["in_war"] = False
         g["queued"] = False
         if g.get("is_system"):
@@ -521,6 +563,37 @@ async def finish_war(war_id: str) -> None:
         else:
             g["losses"] += 1
             g["elo"] = max(800, g["elo"] - random.randint(8, 22))
+        if fid:
+            store.save_faction_stats(fid, g["elo"], g["wins"], g["losses"])
+
+    winner_faction = None
+    if home.get("faction_id") and not home.get("is_system"):
+        if home_won:
+            winner_faction = home["faction_id"]
+    if away.get("faction_id") and not away.get("is_system") and away_won:
+        winner_faction = away["faction_id"]
+
+    home_fid = home.get("faction_id") or "unknown"
+    away_fid = away.get("faction_id") or "unknown"
+    if away.get("is_system"):
+        away_fid = away.get("faction_id") or away_fid
+    store.log_war(home_fid, away_fid, war["home_score"], war["away_score"], winner_faction)
+
+    for side, won, picker_pid, picks in (
+        ("home", home_won, war.get("home_picker_pid"), war.get("home_picks")),
+        ("away", away_won, war.get("away_picker_pid"), war.get("away_picks")),
+    ):
+        gid = war[f"{side}_id"]
+        g = guilds.get(gid, {})
+        if g.get("is_system"):
+            continue
+        for pid in g.get("player_ids", []):
+            store.record_player_war(pid, won)
+        if picker_pid and picks:
+            for fighter_id in picks:
+                store.add_mastery(picker_pid, fighter_id, xp=12 if won else 4, won=won)
+
+    standings = standings_public()
 
     for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
         g = guilds[gid]
@@ -529,6 +602,7 @@ async def finish_war(war_id: str) -> None:
         won = home_won if you_are == "home" else away_won
         opp = away if you_are == "home" else home
         for pid in g["player_ids"]:
+            stats = store.player_public(pid)
             await send_player(pid, {
                 "type": "war.end",
                 "warId": war_id,
@@ -537,6 +611,8 @@ async def finish_war(war_id: str) -> None:
                 "awayScore": war["away_score"],
                 "guild": public_guild_profile(g),
                 "opponent": public_guild_profile(opp),
+                "stats": stats,
+                "standings": standings,
             })
 
     home_id, away_id = war["home_id"], war["away_id"]
@@ -556,20 +632,61 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
     pid = ws_to_player.get(ws)
 
     if mtype == "auth":
-        nickname = (msg.get("nickname") or "fighter")[:20].strip()
-        pid = str(uuid.uuid4())
-        players[pid] = {"ws": ws, "nickname": nickname, "guild_id": None}
+        nickname = (msg.get("nickname") or "fighter")[:20].strip() or "fighter"
+        token = msg.get("token")
+        row = store.get_player_by_token(token) if token else None
+
+        if row:
+            pid = row["id"]
+            store.touch_player(pid, nickname)
+            players[pid] = {
+                "ws": ws,
+                "nickname": nickname,
+                "guild_id": None,
+                "faction_id": row["faction_id"],
+                "token": row["token"],
+            }
+            ws_to_player[ws] = pid
+            guild = None
+            if row["faction_id"]:
+                g = join_faction(pid, row["faction_id"])
+                if g:
+                    guild = public_guild_profile(g)
+            stats = store.player_public(pid)
+            await ws.send(_json({
+                "type": "auth.ok",
+                "playerId": pid,
+                "token": row["token"],
+                "nickname": nickname,
+                "guild": guild,
+                "stats": stats,
+                "factions": factions_public(),
+                "standings": standings_public(),
+                "restored": True,
+            }))
+            return
+
+        row = store.create_player(nickname)
+        pid = row["id"]
+        players[pid] = {
+            "ws": ws,
+            "nickname": nickname,
+            "guild_id": None,
+            "faction_id": None,
+            "token": row["token"],
+        }
         ws_to_player[ws] = pid
-        guild = None
-        gid = players[pid].get("guild_id")
-        if gid and gid in guilds:
-            guild = public_guild_profile(guilds[gid])
+        stats = store.player_public(pid)
         await ws.send(_json({
             "type": "auth.ok",
             "playerId": pid,
+            "token": row["token"],
             "nickname": nickname,
-            "guild": guild,
+            "guild": None,
+            "stats": stats,
             "factions": factions_public(),
+            "standings": standings_public(),
+            "restored": False,
         }))
         return
 
@@ -583,9 +700,12 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if not g:
             await ws.send(_json({"type": "error", "message": "Unknown house"}))
             return
+        stats = store.player_public(pid)
         await ws.send(_json({
             "type": "guild.updated",
             "guild": public_guild_profile(g),
+            "stats": stats,
+            "standings": standings_public(),
         }))
         return
 
@@ -613,8 +733,13 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         return
 
     if mtype == "guild.leave":
-        leave_guild(pid)
-        await ws.send(_json({"type": "guild.updated", "guild": None}))
+        leave_guild(pid, persist=True)
+        await ws.send(_json({
+            "type": "guild.updated",
+            "guild": None,
+            "stats": store.player_public(pid),
+            "standings": standings_public(),
+        }))
         return
 
     if mtype == "war.queue":
@@ -658,6 +783,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if not side:
             return
         war[f"{side}_picks"] = picks
+        war[f"{side}_picker_pid"] = pid
         p = players[pid]
         await notify_pick_progress(war_id, f"{p['nickname']} locked in their roster")
         await maybe_start_duels(war_id)
@@ -684,14 +810,23 @@ async def ws_handler(ws: WebSocketServerProtocol) -> None:
     finally:
         pid = ws_to_player.pop(ws, None)
         if pid and pid in players:
+            gid = players[pid].get("guild_id")
+            if gid and gid in guilds:
+                g = guilds[gid]
+                if g.get("is_faction"):
+                    g["player_ids"] = [x for x in g["player_ids"] if x != pid]
+                    g["members"] = [m for m in g["members"] if m.get("playerId") != pid]
             players[pid]["ws"] = None
 
 
 async def main() -> None:
+    global store
+    store = ArenaStore()
     init_faction_guilds()
     asyncio.create_task(matchmaking_tick())
     async with websockets.serve(ws_handler, "0.0.0.0", PORT):
         print(f"Nazo Arena server on ws://0.0.0.0:{PORT}")
+        print(f"Persistence: {store.path}")
         await asyncio.Future()
 
 
