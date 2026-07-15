@@ -164,6 +164,14 @@ XP on each fighter unlocks combat bonuses in guild wars:
 
 Earn XP by drafting and winning duels (+8 per duel win, +3 loss) plus a small war roster bonus. System rivals scale fake mastery with ELO.
 
+## Sound & juice
+
+Procedural Web Audio SFX (no asset downloads) plus hit flashes, arena shake, and floating damage numbers.
+
+- Mute toggle in the header (saved in `localStorage`)
+- Cues for hits, crits, guards, heals, chaos, draft picks, match found, wins/losses
+- Works in solo campaign and guild wars / raids
+
 ## Polish notes
 
 Guild hall uses **Progress / Map / Boards / Wars** tabs so quests, territory contest, standings, and replays stay out of each other’s way. Queue actions stick to the top of the hall; battle shows a turn banner and score pulse on duel/raid phase end. Chaos backfire is softer (6–18). Raid final-phase HP is slightly lower. Mobile: 2-column territory map, sticky action bar.
@@ -179,6 +187,7 @@ On connect, your account token is saved in browser `localStorage` so wars won an
 ```
 scratch/nazo-arena/
 ├── data/                # SQLite (gitignored)
+├── juice.js             # Procedural SFX + hit juice
 ├── factions.js          # House data + fighters (client)
 ├── server/factions.py   # Same four houses (server)
 ├── server/store.py      # SQLite persistence

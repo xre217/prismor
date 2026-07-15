@@ -12,6 +12,7 @@
     <header>
       <h1>NAZO ARENA</h1>
       <p class="subtitle">謎の箱 · pull fighters · wreck the bracket</p>
+      <button id="btn-mute" class="btn ghost mute-btn" type="button" aria-pressed="false">🔊 Sound on</button>
     </header>
 
     <section id="screen-title" class="screen active">
@@ -29,7 +30,7 @@
         <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
         <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply. Online allies form alliance bonds and can Assist once per duel.</li>
-        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen.</li>
+        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos. Statuses: Burn, Stun, Weaken, Focus, Regen. Sound + hit juice (mute in the header).</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
         <li><strong>Progress</strong> — seasons, relics, territories, daily quests, raids, war replays, fighter mastery, and captain boards save across sessions.</li>
       </ul>
@@ -222,6 +223,7 @@
   </div>
   <script src="data.js"></script>
   <script src="factions.js"></script>
+  <script src="juice.js"></script>
   <script src="game.js"></script>
   <script src="multiplayer.js"></script>
 </body>

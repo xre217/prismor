@@ -150,6 +150,7 @@
         mp.alliance = msg.alliance || null;
         mp.theirAlliance = msg.theirAlliance || null;
         setStatus("War matched");
+        if (window.NazoJuice) window.NazoJuice.play("match");
         showOpponentIntro(msg.opponent, msg.territory);
         break;
       case "war.draft.update":
@@ -164,6 +165,7 @@
         mp.canAssist = false;
         setAssistButton(false);
         setStatus(msg.message || "Assist sent");
+        if (window.NazoJuice) window.NazoJuice.play("assist");
         break;
       case "raid.pick":
         mp.raidMode = true;
@@ -888,6 +890,7 @@
   function onRaidDuelEnd(msg) {
     setWarActions(false);
     pulseScore();
+    if (window.NazoJuice) window.NazoJuice.play(msg.won ? "crit" : "hit");
     setTurnBanner(
       msg.won ? `Phase ${msg.phaseIndex} cleared` : `Fallen at phase ${msg.phaseIndex}`,
       msg.won ? "yours" : "wait"
@@ -915,6 +918,7 @@
     const boss = msg.boss || {};
     $("result-art").textContent = msg.won ? (boss.icon || "🏆") : "💀";
     $("result-title").textContent = msg.won ? "Raid Cleared" : "Raid Failed";
+    if (window.NazoJuice) window.NazoJuice.play(msg.won ? "win" : "lose");
     let body = msg.won
       ? `You cleared ${boss.icon || ""} ${boss.name || "the raid"}.`
       : `The ${boss.name || "boss"} stands. Try again tomorrow if attempts remain.`;
@@ -1138,6 +1142,7 @@
 
       if (canClick) {
         card.addEventListener("click", () => {
+          if (window.NazoJuice) window.NazoJuice.play("pick");
           send("war.draft", { warId: mp.warId, fighterId: f.id });
           card.disabled = true;
         });
@@ -1306,11 +1311,16 @@
   }
 
   function updateWarUI(st) {
+    const prevP = window.NazoSolo.state.playerHp;
+    const prevE = window.NazoSolo.state.enemyHp;
     $("player-hp").style.width = `${Math.max(0, (st.playerHp / st.playerMax) * 100)}%`;
     $("enemy-hp").style.width = `${Math.max(0, (st.enemyHp / st.enemyMax) * 100)}%`;
     $("player-hp-text").textContent = `${Math.max(0, st.playerHp)} / ${st.playerMax}`;
     $("enemy-hp-text").textContent = `${Math.max(0, st.enemyHp)} / ${st.enemyMax}`;
     renderStatuses(st);
+    if (window.NazoJuice) {
+      window.NazoJuice.reactHpDelta(prevP, prevE, st.playerHp, st.enemyHp);
+    }
   }
 
   function setWarActions(on) {
@@ -1349,6 +1359,7 @@
   function onDuelEnd(msg) {
     setWarActions(false);
     pulseScore();
+    if (window.NazoJuice) window.NazoJuice.play(msg.won ? "crit" : "hit");
     $("score-label").textContent = mp.spectating
       ? `${msg.yourScore} — ${msg.theirScore}`
       : `You ${msg.yourScore} — ${msg.theirScore} Them`;
@@ -1409,6 +1420,7 @@
     const oppName = msg.opponent.house || msg.opponent.name;
     $("result-art").textContent = msg.won ? "🏆" : "💀";
     $("result-title").textContent = msg.won ? "Guild Victory" : "Guild Defeat";
+    if (window.NazoJuice) window.NazoJuice.play(msg.won ? "win" : "lose");
     let body = msg.won
       ? `Your guild beat ${oppName} ${your}–${their}. ELO ${msg.guild.elo}.`
       : `${oppName} took it ${their}–${your}. ELO ${msg.guild.elo}.`;
