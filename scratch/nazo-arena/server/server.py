@@ -15,12 +15,21 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from battle_engine import DuelState, ai_choose_action, apply_player_action, duel_winner, fighter_from_id
-from factions import FACTIONS, pick_ids_for_faction, random_opponent_faction
+from draft import (
+    STEP_TIMEOUT_SEC,
+    apply_draft_action,
+    auto_choose,
+    current_step,
+    draft_complete,
+    draft_public,
+    finalize_picks,
+    init_draft,
+)
+from factions import FACTIONS, random_opponent_faction
 from system_guilds import (
     pick_ids_from_roster,
     public_guild_profile,
     spawn_system_guild,
-    system_pick_fighter_ids,
 )
 from store import ArenaStore
 
@@ -345,9 +354,14 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
     home = guilds[home_gid]
     away = guilds[away_gid]
     home["queued"] = False
-    away["queued"] = True  # system guilds show as "in match" briefly
+    away["queued"] = True
     home["in_war"] = True
     away["in_war"] = True
+
+    home_fid = home.get("faction_id")
+    away_fid = away.get("faction_id")
+    if not home_fid or not away_fid:
+        return
 
     war_id = str(uuid.uuid4())
     war = {
@@ -355,7 +369,8 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "home_id": home_gid,
         "away_id": away_gid,
         "system_side": system_side or (away_gid if away.get("is_system") else (home_gid if home.get("is_system") else None)),
-        "phase": "pick",
+        "phase": "draft",
+        "draft": init_draft(home_fid, away_fid),
         "home_picks": None,
         "away_picks": None,
         "home_picker_pid": None,
@@ -366,6 +381,7 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "duel": None,
         "turn": "home",
         "waiting_action": False,
+        "draft_deadline": asyncio.get_event_loop().time() + STEP_TIMEOUT_SEC,
     }
     wars[war_id] = war
 
@@ -376,88 +392,147 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "youAre": "home",
     }
     for pid in home["player_ids"]:
-        msg = {**payload, "opponent": public_guild_profile(away), "youAre": "home"}
+        msg = {
+            **payload,
+            "opponent": public_guild_profile(away),
+            "youAre": "home",
+            "draft": draft_public(war, "home"),
+        }
         await send_player(pid, msg)
 
     if not away.get("is_system"):
         for pid in away["player_ids"]:
-            msg = {**payload, "opponent": public_guild_profile(home), "youAre": "away"}
+            msg = {
+                **payload,
+                "opponent": public_guild_profile(home),
+                "youAre": "away",
+                "draft": draft_public(war, "away"),
+            }
             await send_player(pid, msg)
-    else:
-        # system picks after human delay
-        asyncio.create_task(system_auto_pick(war_id))
 
-    asyncio.create_task(pick_timeout(war_id))
+    asyncio.create_task(draft_tick(war_id))
 
 
-async def system_auto_pick(war_id: str) -> None:
-    await asyncio.sleep(random.uniform(2.5, 6.0))
+async def broadcast_draft(war_id: str, line: str = "") -> None:
     war = wars.get(war_id)
-    if not war or war["phase"] != "pick":
+    if not war or war["phase"] != "draft":
         return
-    away = guilds[war["away_id"]]
-    home = guilds[war["home_id"]]
-    sys_g = away if away.get("is_system") else home
-    if not sys_g.get("is_system"):
-        return
-    picks = system_pick_fighter_ids(sys_g)
-    side = "away" if war["away_id"] == sys_g["id"] else "home"
-    war[f"{side}_picks"] = picks
-    captain = sys_g.get("captain_name", "captain")
-    await notify_pick_progress(war_id, f"{captain} locked in their roster")
-    await maybe_start_duels(war_id)
-
-
-async def pick_timeout(war_id: str) -> None:
-    await asyncio.sleep(45)
-    war = wars.get(war_id)
-    if not war or war["phase"] != "pick":
-        return
-    for side in ("home", "away"):
-        if war[f"{side}_picks"] is None:
-            g = guilds[war[f"{side}_id"]]
-            if g.get("is_system") or g.get("is_faction"):
-                fid = g.get("faction_id")
-                if fid:
-                    war[f"{side}_picks"] = pick_ids_for_faction(fid, 3)
-                else:
-                    war[f"{side}_picks"] = system_pick_fighter_ids(g)
-            else:
-                from factions import FACTION_ORDER
-                war[f"{side}_picks"] = pick_ids_for_faction(random.choice(FACTION_ORDER), 3)
-            # Attribute auto-pick mastery to an online member when possible
-            if not g.get("is_system") and not war.get(f"{side}_picker_pid"):
-                members = online_member_ids(war[f"{side}_id"])
-                if members:
-                    war[f"{side}_picker_pid"] = members[0]
-    await maybe_start_duels(war_id)
-
-
-async def notify_pick_progress(war_id: str, line: str) -> None:
-    war = wars[war_id]
-    for gid in (war["home_id"], war["away_id"]):
+    for gid, you_are in ((war["home_id"], "home"), (war["away_id"], "away")):
         g = guilds[gid]
         if g.get("is_system"):
             continue
         for pid in g["player_ids"]:
             await send_player(pid, {
-                "type": "war.pick.status",
+                "type": "war.draft.update",
                 "warId": war_id,
                 "line": line,
-                "homeReady": war["home_picks"] is not None,
-                "awayReady": war["away_picks"] is not None,
+                "draft": draft_public(war, you_are),
             })
+
+
+async def advance_after_draft_action(war_id: str, line: str = "") -> None:
+    war = wars.get(war_id)
+    if not war or war["phase"] != "draft":
+        return
+    war["draft_deadline"] = asyncio.get_event_loop().time() + STEP_TIMEOUT_SEC
+    await broadcast_draft(war_id, line)
+    if draft_complete(war) or current_step(war) is None:
+        if war.get("_starting_duels"):
+            return
+        war["_starting_duels"] = True
+        finalize_picks(war)
+        await broadcast_draft(war_id, "Draft locked — duels begin")
+        war["phase"] = "duel"
+        war["duel_index"] = 0
+        await asyncio.sleep(0.8)
+        await start_duel(war_id)
+
+
+async def handle_draft_action(war_id: str, side: str, fighter_id: str, pid: str | None = None) -> str | None:
+    war = wars.get(war_id)
+    if not war or war["phase"] != "draft":
+        return "Not in draft"
+    err = apply_draft_action(war, side, fighter_id)
+    if err:
+        return err
+
+    from draft import DRAFT_STEPS
+    from factions import ALL_FIGHTERS
+
+    prev = war["draft"]["step"] - 1
+    action, _ = DRAFT_STEPS[prev]
+    name = ALL_FIGHTERS.get(fighter_id, {}).get("name", fighter_id)
+    if pid and pid in players:
+        actor = players[pid]["nickname"]
+        war[f"{side}_picker_pid"] = pid
+    else:
+        actor = guilds[war[f"{side}_id"]].get("captain_name", "Rival")
+        members = online_member_ids(war[f"{side}_id"])
+        if members and not war.get(f"{side}_picker_pid") and action == "pick":
+            war[f"{side}_picker_pid"] = members[0]
+
+    verb = "banned" if action == "ban" else "picked"
+    await advance_after_draft_action(war_id, f"{actor} {verb} {name}")
+    return None
+
+
+async def draft_tick(war_id: str) -> None:
+    """Drive system turns and per-step timeouts until draft completes."""
+    while True:
+        await asyncio.sleep(0.25)
+        war = wars.get(war_id)
+        if not war or war["phase"] != "draft":
+            return
+
+        step = current_step(war)
+        if not step:
+            if not war.get("_starting_duels"):
+                war["_starting_duels"] = True
+                finalize_picks(war)
+                war["phase"] = "duel"
+                war["duel_index"] = 0
+                await start_duel(war_id)
+            return
+
+        _action, side = step
+        gid = war[f"{side}_id"]
+        g = guilds[gid]
+        now = asyncio.get_event_loop().time()
+        is_system = g.get("is_system", False)
+        timed_out = now >= war.get("draft_deadline", now + 999)
+
+        if is_system:
+            await asyncio.sleep(random.uniform(1.4, 3.2))
+            war = wars.get(war_id)
+            if not war or war["phase"] != "draft":
+                return
+            step = current_step(war)
+            if not step or step[1] != side:
+                continue
+            fid = auto_choose(war, side)
+            if fid:
+                await handle_draft_action(war_id, side, fid, pid=None)
+            continue
+
+        if timed_out:
+            fid = auto_choose(war, side)
+            if fid:
+                members = online_member_ids(gid)
+                pid = members[0] if members else None
+                await handle_draft_action(war_id, side, fid, pid=pid)
+            continue
 
 
 async def maybe_start_duels(war_id: str) -> None:
     war = wars.get(war_id)
-    if not war or war["phase"] != "pick":
+    if not war or war.get("_starting_duels"):
         return
-    if war["home_picks"] is None or war["away_picks"] is None:
-        return
-    war["phase"] = "duel"
-    war["duel_index"] = 0
-    await start_duel(war_id)
+    if war["phase"] == "draft" and (draft_complete(war) or current_step(war) is None):
+        war["_starting_duels"] = True
+        finalize_picks(war)
+        war["phase"] = "duel"
+        war["duel_index"] = 0
+        await start_duel(war_id)
 
 
 async def start_duel(war_id: str) -> None:
@@ -908,11 +983,11 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         await ws.send(_json({"type": "war.unqueued"}))
         return
 
-    if mtype == "war.pick":
+    if mtype == "war.draft":
         war_id = msg.get("warId")
-        picks = msg.get("fighters", [])[:3]
+        fighter_id = msg.get("fighterId")
         war = wars.get(war_id)
-        if not war or war["phase"] != "pick" or len(picks) != 3:
+        if not war or war["phase"] != "draft" or not fighter_id:
             return
         gid = players[pid].get("guild_id")
         side = None
@@ -922,11 +997,9 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             side = "away"
         if not side:
             return
-        war[f"{side}_picks"] = picks
-        war[f"{side}_picker_pid"] = pid
-        p = players[pid]
-        await notify_pick_progress(war_id, f"{p['nickname']} locked in their roster")
-        await maybe_start_duels(war_id)
+        err = await handle_draft_action(war_id, side, fighter_id, pid=pid)
+        if err:
+            await ws.send(_json({"type": "error", "message": err}))
         return
 
     if mtype == "war.action":

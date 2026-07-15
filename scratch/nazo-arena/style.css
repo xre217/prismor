@@ -436,9 +436,119 @@ header h1 {
 
 .war-pick-wait {
   text-align: center;
-  padding: 2rem;
+  padding: 1.25rem;
   color: var(--gold);
   animation: pulse 1.5s ease infinite;
+}
+
+.draft-prompt {
+  text-align: center;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 1rem;
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+.draft-prompt.your-turn {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.draft-board {
+  display: grid;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.draft-side h3 {
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent2);
+}
+
+.draft-pool {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.draft-card {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0.1rem 0.55rem;
+  align-items: center;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.55rem 0.65rem;
+  cursor: default;
+  font-family: inherit;
+  position: relative;
+}
+
+.draft-card .draft-icon { font-size: 1.4rem; grid-row: span 2; }
+.draft-card .draft-name { font-size: 0.8rem; font-weight: 700; }
+.draft-card .draft-type { font-size: 0.6rem; color: var(--muted); }
+.draft-card .draft-stats {
+  grid-column: 2 / -1;
+  font-size: 0.58rem;
+  color: var(--muted);
+}
+.draft-card .draft-xp {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.4rem;
+  font-size: 0.55rem;
+  color: var(--gold);
+}
+.draft-card .draft-state {
+  position: absolute;
+  bottom: 0.3rem;
+  right: 0.4rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.draft-card.selectable {
+  cursor: pointer;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.25);
+}
+
+.draft-card.selectable:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent2);
+}
+
+.draft-card.banned {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.draft-card.banned .draft-state { color: var(--accent); }
+
+.draft-card.picked {
+  border-color: var(--accent2);
+}
+.draft-card.picked .draft-state { color: var(--accent2); }
+
+.draft-card:disabled:not(.selectable) { cursor: default; }
+
+.draft-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.draft-meta strong { color: var(--text); font-weight: 500; }
+
+@media (min-width: 560px) {
+  .draft-board { grid-template-columns: 1fr 1fr; }
 }
 
 @keyframes pulse {

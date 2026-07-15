@@ -11,6 +11,15 @@ Browser roguelite battler with **four house guilds** and hidden System opponents
 | **Hufflepuff** | OpenAI | GPT-4o, o1 Reasoner, Codex, DALL·E Dream |
 | **Slytherin** | The Rest | DeepSeek R1, Gemini Ultra, Mistral, Llama Horde, Command R+ |
 
+## Ban / Pick draft
+
+Guild wars use a short draft before duels:
+
+1. **Ban** — each side bans 1 fighter from the opponent's house pool  
+2. **Snake pick** — home / away / away / home / home / away into duel order (1→2→3)
+
+System rivals draft with human-like delays. Idle ~22s auto-acts.
+
 ## House passives (guild wars)
 
 | House | Passive | Effect |

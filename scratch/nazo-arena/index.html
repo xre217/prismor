@@ -27,7 +27,7 @@
       <ul class="rules">
         <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
         <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
-        <li><strong>Guild Wars</strong> — pick a house, queue for war, draft from your house pool, best-of-3 duels. House passives apply.</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
         <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
         <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
         <li><strong>Progress</strong> — wars, ELO, and fighter mastery save across sessions.</li>
@@ -78,16 +78,35 @@
         <div id="opp-members" class="member-chips"></div>
         <p id="opp-motd" class="motd"></p>
       </div>
-      <p class="muted">Draft your war roster. They'll do the same.</p>
-      <button id="btn-war-intro-go" class="btn primary">Draft Roster</button>
+      <p class="muted">Ban 1 from their house, then snake-pick 3 into duel order.</p>
+      <button id="btn-war-intro-go" class="btn primary">Enter Ban / Pick</button>
     </section>
 
-    <!-- War draft -->
+    <!-- Ban/pick draft -->
     <section id="screen-war-draft" class="screen">
-      <h2>War Roster <span id="war-pull-count">1 / 3</span></h2>
-      <div id="war-draft-options" class="card-row"></div>
+      <h2>Ban / Pick <span id="draft-step-label" class="muted">1 / 8</span></h2>
+      <p id="draft-prompt" class="draft-prompt">—</p>
       <p id="war-pick-status" class="muted"></p>
-      <p id="war-pick-wait" class="war-pick-wait hidden">Waiting for opponent captain...</p>
+
+      <div class="draft-board">
+        <div class="draft-side">
+          <h3>Their house</h3>
+          <div id="draft-their-pool" class="draft-pool"></div>
+          <div class="draft-meta">
+            <span>Banned: <strong id="draft-their-bans">—</strong></span>
+            <span>Picked: <strong id="draft-their-picks">—</strong></span>
+          </div>
+        </div>
+        <div class="draft-side">
+          <h3>Your house</h3>
+          <div id="draft-your-pool" class="draft-pool"></div>
+          <div class="draft-meta">
+            <span>Banned: <strong id="draft-your-bans">—</strong></span>
+            <span>Picked: <strong id="draft-your-picks">—</strong></span>
+          </div>
+        </div>
+      </div>
+      <p id="war-pick-wait" class="war-pick-wait hidden">Waiting for opponent...</p>
     </section>
 
     <!-- Solo draft -->

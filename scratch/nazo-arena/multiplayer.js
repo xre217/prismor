@@ -2,7 +2,7 @@
 
 (function () {
   const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname}:8765`;
-  const { ARCHETYPES, cloneFighter, randomPick, fightersForFaction, FACTIONS } = window.NazoData;
+  const { ARCHETYPES, cloneFighter, fightersForFaction, FACTIONS } = window.NazoData;
   const { showScreen, renderFighterCard, log, $ } = window.NazoSolo;
 
   const mp = {
@@ -18,6 +18,7 @@
     warRoster: [],
     pickBuffer: [],
     warDraftIndex: 0,
+    draft: null,
     yourFighter: null,
     theirFighter: null,
     yourTurn: false,
@@ -107,13 +108,17 @@
         mp.warId = msg.warId;
         mp.youAre = msg.youAre;
         mp.opponent = msg.opponent;
-        mp.pickBuffer = [];
-        mp.warDraftIndex = 0;
+        mp.draft = msg.draft || null;
         setStatus("War matched");
         showOpponentIntro(msg.opponent);
         break;
-      case "war.pick.status":
-        $("war-pick-status").textContent = msg.line || "";
+      case "war.draft.update":
+        mp.draft = msg.draft;
+        if (msg.line) $("war-pick-status").textContent = msg.line;
+        if ($("screen-war-draft").classList.contains("active")
+            || $("screen-war-intro").classList.contains("active")) {
+          renderDraftBoard();
+        }
         break;
       case "war.duel.start":
         startWarDuel(msg);
@@ -276,44 +281,99 @@
   }
 
   function startWarDraft() {
-    mp.warRoster = [];
-    mp.pickBuffer = [];
-    mp.warDraftIndex = 0;
     window.NazoSolo.state.mode = "war";
     showScreen("screen-war-draft");
-    warDraftPull();
+    renderDraftBoard();
   }
 
-  function warDraftPull() {
-    $("war-pull-count").textContent = `${mp.warDraftIndex + 1} / 3`;
-    const container = $("war-draft-options");
-    container.innerHTML = "";
-    const factionId = mp.guild?.factionId || mp.guild?.id?.replace("faction-", "");
-    const pool = factionId ? fightersForFaction(factionId) : (window.NazoData.ALL_FIGHTERS || ARCHETYPES);
-    // Soft bias: high-mastery fighters appear slightly more often
-    const weighted = [];
-    pool.forEach((f) => {
-      const xp = masteryXp(f.id);
-      const copies = 1 + Math.min(2, Math.floor(xp / 24));
-      for (let i = 0; i < copies; i++) weighted.push(f);
+  function nameForId(fid, pool) {
+    const hit = (pool || []).find((f) => f.id === fid);
+    if (hit) return `${hit.icon} ${hit.name}`;
+    const all = window.NazoData.ALL_FIGHTERS || [];
+    const f = all.find((x) => x.id === fid);
+    return f ? `${f.icon} ${f.name}` : fid;
+  }
+
+  function renderDraftBoard() {
+    const d = mp.draft;
+    if (!d) {
+      $("draft-prompt").textContent = "Waiting for draft...";
+      return;
+    }
+
+    $("draft-step-label").textContent = `${Math.min(d.step + 1, d.totalSteps)} / ${d.totalSteps}`;
+    $("draft-prompt").textContent = d.prompt;
+    $("draft-prompt").className = d.yourTurn ? "draft-prompt your-turn" : "draft-prompt";
+
+    $("draft-your-bans").textContent = d.yourBans.length
+      ? d.yourBans.map((id) => nameForId(id, d.yourPool)).join(", ")
+      : "—";
+    $("draft-their-bans").textContent = d.theirBans.length
+      ? d.theirBans.map((id) => nameForId(id, d.theirPool)).join(", ")
+      : "—";
+    $("draft-your-picks").textContent = d.yourPicks.length
+      ? d.yourPicks.map((id, i) => `${i + 1}. ${nameForId(id, d.yourPool)}`).join(" · ")
+      : "—";
+    $("draft-their-picks").textContent = d.theirPicks.length
+      ? d.theirPicks.map((id, i) => `${i + 1}. ${nameForId(id, d.theirPool)}`).join(" · ")
+      : "—";
+
+    const selectable = new Set(d.selectable || []);
+    renderDraftPool($("draft-their-pool"), d.theirPool, {
+      selectable,
+      banned: new Set(d.theirBans || []),
+      picks: d.theirPicks || [],
+      canAct: d.yourTurn && d.phase === "ban",
     });
-    randomPick(weighted.length ? weighted : pool, 3).forEach((base) => {
-      const card = renderFighterCard(base, (f) => {
-        mp.pickBuffer.push(f.id);
-        mp.warRoster.push(cloneFighter(f));
-        mp.warDraftIndex++;
-        if (mp.warDraftIndex >= 3) {
-          send("war.pick", { warId: mp.warId, fighters: mp.pickBuffer });
-          $("war-pick-wait").classList.remove("hidden");
-          $("war-draft-options").innerHTML = `<p class="muted">Roster submitted. Waiting for ${mp.opponent.name}...</p>`;
-        } else warDraftPull();
-      });
-      const xp = masteryXp(base.id);
-      if (xp > 0) {
-        const badge = document.createElement("div");
-        badge.className = "mastery-badge";
-        badge.textContent = `${xp} XP`;
-        card.appendChild(badge);
+    renderDraftPool($("draft-your-pool"), d.yourPool, {
+      selectable,
+      banned: new Set(d.yourBans || []),
+      picks: d.yourPicks || [],
+      canAct: d.yourTurn && d.phase === "pick",
+    });
+
+    const wait = $("war-pick-wait");
+    if (d.yourTurn || d.phase === "done") wait.classList.add("hidden");
+    else wait.classList.remove("hidden");
+  }
+
+  function renderDraftPool(container, pool, opts) {
+    container.innerHTML = "";
+    const pickIndex = {};
+    opts.picks.forEach((id, i) => { pickIndex[id] = i + 1; });
+
+    (pool || []).forEach((f) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "draft-card";
+      const xp = masteryXp(f.id);
+      let state = "";
+      if (opts.banned.has(f.id)) {
+        card.classList.add("banned");
+        state = "BANNED";
+      } else if (pickIndex[f.id]) {
+        card.classList.add("picked");
+        state = `#${pickIndex[f.id]}`;
+      }
+
+      const canClick = opts.canAct && opts.selectable.has(f.id);
+      if (canClick) card.classList.add("selectable");
+      card.disabled = !canClick;
+
+      card.innerHTML = `
+        <span class="draft-icon">${f.icon}</span>
+        <span class="draft-name">${f.name}</span>
+        <span class="draft-type">${f.type} · ${f.skill}</span>
+        <span class="draft-stats">PWR ${f.stats.power} · SPD ${f.stats.speed} · MND ${f.stats.mind}</span>
+        ${xp ? `<span class="draft-xp">${xp} XP</span>` : ""}
+        ${state ? `<span class="draft-state">${state}</span>` : ""}
+      `;
+
+      if (canClick) {
+        card.addEventListener("click", () => {
+          send("war.draft", { warId: mp.warId, fighterId: f.id });
+          card.disabled = true;
+        });
       }
       container.appendChild(card);
     });
