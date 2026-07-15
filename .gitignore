@@ -22,3 +22,6 @@ dist/
 build/
 .venv/
 venv/
+
+# Nazo Arena local DB
+scratch/nazo-arena/data/*.db

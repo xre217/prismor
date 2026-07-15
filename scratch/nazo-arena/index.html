@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nazo Arena — 謎の箱</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="scanlines"></div>
+  <div id="app">
+    <header>
+      <h1>NAZO ARENA</h1>
+      <p class="subtitle">謎の箱 · pull fighters · wreck the bracket</p>
+    </header>
+
+    <section id="screen-title" class="screen active">
+      <div class="box-art">📦</div>
+      <p class="tagline">Solo campaign or guild wars. Rivals look real — always.</p>
+      <button id="btn-start" class="btn primary">Solo — Open the Box</button>
+      <button id="btn-mp" class="btn primary alt">Guild Wars — Multiplayer</button>
+      <button id="btn-how" class="btn ghost">How it works</button>
+    </section>
+
+    <section id="screen-how" class="screen">
+      <h2>Rules</h2>
+      <ul class="rules">
+        <li><strong>Solo</strong> — draft 3 fighters from the full pool, survive 8 arena tiers.</li>
+        <li><strong>Houses</strong> — Gryffindor (Anthropic), Ravenclaw (xAI), Hufflepuff (OpenAI), Slytherin (everyone else).</li>
+        <li><strong>Guild Wars</strong> — pick a house, queue, ban 1 from their roster, snake-pick 3 into duel order. House passives apply.</li>
+        <li><strong>Battle</strong> — Strike, Guard, Skill, or Chaos each turn.</li>
+        <li><strong>Rivals</strong> — matched guilds look like real teams. Member lists, ELO, captains. You never know who's on the other side.</li>
+        <li><strong>Progress</strong> — wars and duels build fighter mastery (Adept → Legend), which boosts stats in guild wars.</li>
+      </ul>
+      <button id="btn-how-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- Multiplayer login -->
+    <section id="screen-login" class="screen">
+      <h2>Enter the Arena</h2>
+      <label class="field">Callsign<input id="input-nick" type="text" maxlength="20" placeholder="your_name" /></label>
+      <button id="btn-login" class="btn primary">Connect</button>
+      <p id="mp-status" class="mp-status">Offline</p>
+      <button id="btn-login-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- House selection -->
+    <section id="screen-houses" class="screen">
+      <h2>Choose Your House</h2>
+      <p class="muted">Four guilds. One war. Rivals never know who's really online.</p>
+      <div id="house-grid" class="house-grid"></div>
+      <button id="btn-houses-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- Guild hall -->
+    <section id="screen-guild" class="screen">
+      <h2>Guild Hall</h2>
+      <p id="guild-status" class="mp-status ok">Online</p>
+      <div id="player-stats"></div>
+      <div id="guild-panel"></div>
+      <div id="standings-panel" class="standings-panel"></div>
+      <div class="guild-actions">
+        <button id="btn-war-queue" class="btn primary" disabled>Queue House War</button>
+        <button id="btn-war-cancel" class="btn ghost hidden">Cancel Queue</button>
+      </div>
+      <button id="btn-leave-house" class="btn ghost">Leave House</button>
+      <button id="btn-guild-back" class="btn ghost">Back</button>
+    </section>
+
+    <!-- War opponent intro (looks like a real guild) -->
+    <section id="screen-war-intro" class="screen">
+      <h2>War Declared</h2>
+      <div class="opponent-card">
+        <span id="opp-crest" class="guild-crest large">◈</span>
+        <div id="opp-name" class="opp-name">—</div>
+        <div id="opp-tag" class="opp-tag">[----]</div>
+        <div id="opp-elo" class="guild-meta">—</div>
+        <div id="opp-members" class="member-chips"></div>
+        <p id="opp-motd" class="motd"></p>
+      </div>
+      <p class="muted">Ban 1 from their house, then snake-pick 3 into duel order.</p>
+      <button id="btn-war-intro-go" class="btn primary">Enter Ban / Pick</button>
+    </section>
+
+    <!-- Ban/pick draft -->
+    <section id="screen-war-draft" class="screen">
+      <h2>Ban / Pick <span id="draft-step-label" class="muted">1 / 8</span></h2>
+      <p id="draft-prompt" class="draft-prompt">—</p>
+      <p id="war-pick-status" class="muted"></p>
+
+      <div class="draft-board">
+        <div class="draft-side">
+          <h3>Their house</h3>
+          <div id="draft-their-pool" class="draft-pool"></div>
+          <div class="draft-meta">
+            <span>Banned: <strong id="draft-their-bans">—</strong></span>
+            <span>Picked: <strong id="draft-their-picks">—</strong></span>
+          </div>
+        </div>
+        <div class="draft-side">
+          <h3>Your house</h3>
+          <div id="draft-your-pool" class="draft-pool"></div>
+          <div class="draft-meta">
+            <span>Banned: <strong id="draft-your-bans">—</strong></span>
+            <span>Picked: <strong id="draft-your-picks">—</strong></span>
+          </div>
+        </div>
+      </div>
+      <p id="war-pick-wait" class="war-pick-wait hidden">Waiting for opponent...</p>
+    </section>
+
+    <!-- Solo draft -->
+    <section id="screen-draft" class="screen">
+      <h2>Mystery Pull <span id="pull-count">1 / 3</span></h2>
+      <div id="draft-options" class="card-row"></div>
+      <div id="roster-preview" class="roster"></div>
+    </section>
+
+    <!-- Shared battle screen (solo + war) -->
+    <section id="screen-battle" class="screen">
+      <div class="battle-header">
+        <span id="tier-label">Tier 1</span>
+        <span id="score-label">Wins: 0</span>
+      </div>
+      <p id="battle-passive" class="battle-passive hidden"></p>
+      <p id="battle-mastery" class="battle-mastery hidden"></p>
+      <p id="battle-intel" class="battle-intel hidden"></p>
+      <div class="arena">
+        <div class="fighter-panel player-side">
+          <div id="player-sprite" class="sprite">?</div>
+          <div id="player-name" class="fname">—</div>
+          <div class="hp-bar"><div id="player-hp" class="hp-fill"></div></div>
+          <div id="player-hp-text" class="hp-text">100 / 100</div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="fighter-panel enemy-side">
+          <div id="enemy-sprite" class="sprite">?</div>
+          <div id="enemy-name" class="fname">—</div>
+          <div class="hp-bar"><div id="enemy-hp" class="hp-fill enemy"></div></div>
+          <div id="enemy-hp-text" class="hp-text">100 / 100</div>
+        </div>
+      </div>
+      <div id="battle-log" class="log"></div>
+      <div id="action-bar" class="actions">
+        <button class="btn action" data-action="strike">⚔ Strike</button>
+        <button class="btn action" data-action="guard">🛡 Guard</button>
+        <button class="btn action" data-action="skill">✦ Skill</button>
+        <button class="btn action" data-action="chaos">☠ Chaos</button>
+      </div>
+      <div id="swap-bar" class="swap hidden">
+        <p>Fighter down! Send the next one:</p>
+        <div id="swap-options" class="card-row small"></div>
+      </div>
+    </section>
+
+    <section id="screen-result" class="screen">
+      <div id="result-art" class="box-art">🏆</div>
+      <h2 id="result-title">Champion</h2>
+      <p id="result-body"></p>
+      <button id="btn-replay" class="btn primary">Run it back</button>
+      <button id="btn-result-guild" class="btn ghost hidden">Back to Guild Hall</button>
+    </section>
+  </div>
+  <script src="data.js"></script>
+  <script src="factions.js"></script>
+  <script src="game.js"></script>
+  <script src="multiplayer.js"></script>
+</body>
+</html>
