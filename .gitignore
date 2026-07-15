@@ -1,50 +1,24 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# OS
+.DS_Store
+Thumbs.db
 
-# Virtual environments
-venv/
-env/
-.venv/
-
-# Python build artifacts (sdist/wheel from `python -m build`)
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Environment variables
-.env
-.env.local
-
-# Key pairs and secrets (public key is intentionally shipped)
-*.pem
-*.key
-signature.bin
-
-# Temporary files & logs
-*.log
-*.bin
-tmp/
-temp/
-.prismor/
-
-# Generated hook configs (created by install-hooks, user-specific paths)
-.claude/settings.json
-.cursor/hooks.json
-.windsurf/hooks.json
-
-# Scaffolded plugin packages (created by install-hooks --agent openclaw/hermes)
-prismor/runtime/openclaw-plugin/
-prismor/runtime/hermes-plugin/
-
-# IDEs and OS files
-.vscode/
+# Editors
 .idea/
+.vscode/
 *.swp
 *.swo
-.DS_Store
-assets/*
-experiments/*
-.agents/*node_modules/
+*~
+
+# Secrets & env
+.env
+.env.*
+!.env.example
+
+# Language runtimes
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+build/
+.venv/
+venv/
