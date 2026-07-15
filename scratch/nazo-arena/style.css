@@ -331,6 +331,121 @@ header h1 {
   margin-bottom: 2rem;
 }
 
+.btn.primary.alt {
+  background: linear-gradient(135deg, #00e5c3, #009980);
+}
+
+.field {
+  display: block;
+  margin: 0.75rem 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.field input {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.65rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.mp-status {
+  text-align: center;
+  font-size: 0.72rem;
+  margin: 1rem 0;
+  color: var(--muted);
+}
+
+.mp-status.err { color: var(--accent); }
+.mp-status.ok { color: var(--accent2); }
+
+.muted { color: var(--muted); font-size: 0.8rem; line-height: 1.6; }
+
+.hidden { display: none !important; }
+
+.guild-banner {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.guild-crest { font-size: 2rem; }
+.guild-crest.large { font-size: 3rem; display: block; text-align: center; margin-bottom: 0.5rem; }
+
+.guild-title { font-family: Syne, sans-serif; font-size: 1.2rem; }
+.guild-title .tag { color: var(--accent2); font-size: 0.85rem; }
+.guild-meta { font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem; }
+
+.member-list { font-size: 0.72rem; margin-bottom: 1rem; }
+.member-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.member-row .role { color: var(--accent); text-transform: uppercase; font-size: 0.6rem; }
+.member-row .seen { color: var(--muted); font-size: 0.65rem; }
+
+.invite { font-size: 0.75rem; margin: 1rem 0; }
+.invite code { color: var(--gold); letter-spacing: 0.1em; }
+
+.guild-actions { margin: 1rem 0; }
+.guild-form { margin: 0.75rem 0; font-size: 0.8rem; color: var(--muted); }
+.guild-form summary { cursor: pointer; color: var(--accent2); margin-bottom: 0.5rem; }
+
+.opponent-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.opp-name { font-family: Syne, sans-serif; font-size: 1.4rem; }
+.opp-tag { color: var(--accent2); font-size: 0.85rem; margin-bottom: 0.5rem; }
+
+.member-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: center;
+  margin: 1rem 0;
+}
+
+.member-chip {
+  font-size: 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+}
+
+.member-chip em { color: var(--muted); font-style: normal; }
+
+.motd { font-size: 0.75rem; color: var(--muted); font-style: italic; }
+
+.war-pick-wait {
+  text-align: center;
+  padding: 2rem;
+  color: var(--gold);
+  animation: pulse 1.5s ease infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 @media (min-width: 520px) {
   .card-row:not(.small) { flex-direction: row; }
   .card-row:not(.small) .fighter-card { flex: 1; display: flex; flex-direction: column; text-align: center; }

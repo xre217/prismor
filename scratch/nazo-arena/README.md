@@ -1,10 +1,10 @@
 # Nazo Arena
 
-Browser roguelite battler — pull AI fighters from the mystery box and fight through 8 arena tiers.
+Browser roguelite battler with **guild wars multiplayer**. Rivals look like real guilds — member lists, captains, ELO. Some of them aren't what they seem (the server never tells).
 
-## Play
+## Play solo
 
-Open `index.html` in a browser, or:
+Open `index.html` or:
 
 ```bash
 cd scratch/nazo-arena
@@ -12,27 +12,63 @@ python3 -m http.server 8080
 # → http://localhost:8080
 ```
 
-## Loop
+## Play multiplayer
 
-1. **Draft** — 3 mystery pulls, pick one fighter each time (12 archetypes).
-2. **Fight** — turn-based: Strike, Guard, Skill, or Chaos.
-3. **Survive** — 8 tiers, scaling enemies. Swap bench fighters when one falls.
+Terminal 1 — arena server:
+
+```bash
+cd scratch/nazo-arena
+pip install -r requirements.txt
+python3 server/server.py
+# ws://localhost:8765
+```
+
+Terminal 2 — static files:
+
+```bash
+cd scratch/nazo-arena
+python3 -m http.server 8080
+```
+
+Then **Guild Wars → Connect → Create guild → Queue Guild War**.
+
+Open a second browser tab/window to test human-vs-human, or queue alone and a "rival guild" appears after ~4 seconds.
+
+## Guild war flow
+
+1. Pick a callsign and connect
+2. Create or join a guild (share invite code)
+3. Queue for war — matchmaking finds another guild or fills with an opponent that looks human
+4. Draft 3 fighters (same mystery pulls as solo)
+5. Best-of-3 duels — turn-based Strike / Guard / Skill / Chaos
+6. ELO updates; back to guild hall
+
+## The hidden layer
+
+Server-side only (`server/system_guilds.py`):
+
+- Synthetic guilds with believable names, tags, member rosters, and "last seen" timestamps
+- Captains lock rosters after human-like delays
+- Turns use think-time jitter before acting
+- **Clients never receive `is_system`** — opponents always look like player guilds
+
+Real human guilds can match each other when two are queued.
+
+## Layout
+
+```
+scratch/nazo-arena/
+├── index.html       # UI
+├── data.js          # Fighter archetypes
+├── game.js          # Solo campaign
+├── multiplayer.js   # Guild client
+├── server/
+│   ├── server.py           # WebSocket + matchmaking
+│   ├── battle_engine.py    # Server-side duels
+│   └── system_guilds.py    # Hidden opponent profiles
+└── requirements.txt
+```
 
 ## Fighters
 
-| Name | Type | Skill |
-|------|------|-------|
-| The Oracle | Seer | Foresight — next hit ×2 |
-| The Spark | Blitz | Overclock — double tap |
-| The Titan | Fortress | Bulwark — heal + guard |
-| The Mirror | Copycat | Reflect — return damage |
-| The Nomad | Rogue | Fade — dodge + counter |
-| The Diver | Analyst | Deep Scan — pierce guard |
-| The Jester | Chaos | Wild Card — boom or bust |
-| The Atom | Swarm | Split — triple micro-hits |
-| The Sage | Harmony | Balance — heal |
-| The Wraith | Phantom | Phase — shield pierce |
-| The Forge | Berserker | Meltdown — huge hit, recoil |
-| The Lotus | Mystic | Bloom — big heal |
-
-Pure fiction. No real models, no geopolitics — just arena nonsense.
+12 archetypes — The Oracle, The Spark, The Titan, The Mirror, The Nomad, The Diver, The Jester, The Atom, The Sage, The Wraith, The Forge, The Lotus. Pure fiction.
