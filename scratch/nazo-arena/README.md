@@ -69,6 +69,20 @@ Unlock relics by winning house wars (40% drop chance for a new relic). Equip one
 
 New accounts start with **Iron Ward**. System rivals equip scaled relics by ELO.
 
+## Territory map
+
+Twelve regions on the castle grounds. Click a **rival or neutral** region in the guild hall, then queue — winner takes control.
+
+| Region | Default | Bonus (wars) |
+|--------|---------|--------------|
+| Astronomy Tower / North Tower | Ravenclaw | +Mind / +HP |
+| Gryffindor Tower | Gryffindor | +Power |
+| Greenhouse | Hufflepuff | Open Regen each duel |
+| Dungeons / Forbidden Forest | Slytherin | Chaos burn boost / strike Burn |
+| Great Hall, Library, Owlery, … | Neutral | Mixed combat perks |
+
+Owned lands stack mild bonuses in guild wars (**max 3**). Season rollover restores home defaults and clears neutrals.
+
 ## Seasons & leaderboard
 
 Seasons last **7 days** by default (`NAZO_ARENA_SEASON_DAYS` to override).

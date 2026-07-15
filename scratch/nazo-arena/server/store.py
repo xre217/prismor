@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS player_relics (
 );
 """
 
+TERRITORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS territories (
+    id TEXT PRIMARY KEY,
+    owner_faction TEXT,
+    held_since TEXT,
+    season_id INTEGER
+);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -112,6 +121,7 @@ class ArenaStore:
         self.conn.executescript(SCHEMA)
         self.conn.executescript(SEASON_SCHEMA)
         self.conn.executescript(RELIC_SCHEMA)
+        self.conn.executescript(TERRITORY_SCHEMA)
         self._migrate_war_log_season()
         self._migrate_equipped_relic()
         self.conn.commit()
@@ -174,6 +184,83 @@ class ArenaStore:
     def get_equipped_relic(self, pid: str) -> str | None:
         row = self.get_player_by_id(pid)
         return row.get("equipped_relic") if row else None
+
+    # --- territories ---
+
+    def ensure_territories(self, season_id: int, defs: dict) -> None:
+        """Seed map; home regions default to their house if unset."""
+        for tid, meta in defs.items():
+            row = self.conn.execute("SELECT id FROM territories WHERE id = ?", (tid,)).fetchone()
+            if row:
+                continue
+            owner = meta.get("home")
+            self.conn.execute(
+                """
+                INSERT INTO territories (id, owner_faction, held_since, season_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (tid, owner, _now() if owner else None, season_id),
+            )
+        self.conn.commit()
+
+    def reset_territories_for_season(self, season_id: int, defs: dict) -> None:
+        """On season rollover: restore home defaults, clear neutrals."""
+        for tid, meta in defs.items():
+            owner = meta.get("home")
+            self.conn.execute(
+                """
+                INSERT INTO territories (id, owner_faction, held_since, season_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    owner_faction = excluded.owner_faction,
+                    held_since = excluded.held_since,
+                    season_id = excluded.season_id
+                """,
+                (tid, owner, _now() if owner else None, season_id),
+            )
+        self.conn.commit()
+
+    def get_territory_owner(self, tid: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT owner_faction FROM territories WHERE id = ?", (tid,)
+        ).fetchone()
+        return row["owner_faction"] if row else None
+
+    def set_territory_owner(self, tid: str, faction_id: str | None, season_id: int) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO territories (id, owner_faction, held_since, season_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                owner_faction = excluded.owner_faction,
+                held_since = excluded.held_since,
+                season_id = excluded.season_id
+            """,
+            (tid, faction_id, _now() if faction_id else None, season_id),
+        )
+        self.conn.commit()
+
+    def all_territories(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, owner_faction, held_since, season_id FROM territories"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def territories_owned_by(self, faction_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT id FROM territories WHERE owner_faction = ?", (faction_id,)
+        ).fetchall()
+        return [r["id"] for r in rows]
+
+    def territory_counts(self) -> dict[str, int]:
+        rows = self.conn.execute(
+            """
+            SELECT owner_faction, COUNT(*) AS c FROM territories
+            WHERE owner_faction IS NOT NULL
+            GROUP BY owner_faction
+            """
+        ).fetchall()
+        return {r["owner_faction"]: int(r["c"]) for r in rows}
 
     # --- seasons ---
 
@@ -245,7 +332,10 @@ class ArenaStore:
         self.conn.commit()
 
         next_num = sid + 1
-        return self.create_season(next_num, length_days)
+        new_season = self.create_season(next_num, length_days)
+        from territories import TERRITORIES
+        self.reset_territories_for_season(new_season["id"], TERRITORIES)
+        return new_season
 
     def sync_season_faction(self, season_id: int, fid: str, elo: int, wins: int, losses: int) -> None:
         self.conn.execute(

@@ -671,6 +671,83 @@ body.house-slytherin header h1 { background: linear-gradient(135deg, #1a472a, #a
 .relic-rarity { font-size: 0.55rem; color: var(--muted); text-transform: uppercase; }
 .relic-desc { font-size: 0.58rem; color: var(--muted); line-height: 1.35; }
 
+.territory-panel {
+  margin: 0.75rem 0 1rem;
+}
+
+.territory-panel h3 {
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+  color: var(--gold);
+}
+
+.territory-map {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(4, auto);
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.territory-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  text-align: left;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.45rem 0.4rem;
+  cursor: pointer;
+  min-height: 4.6rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.territory-cell:hover:not(:disabled) {
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+
+.territory-cell.selected {
+  border-color: var(--accent2);
+  box-shadow: inset 0 0 0 1px var(--accent2);
+}
+
+.territory-cell.yours {
+  opacity: 0.85;
+  cursor: default;
+}
+
+.territory-cell.neutral { border-style: dashed; }
+
+.territory-cell.owned-gryffindor { border-color: #c45c3e; }
+.territory-cell.owned-ravenclaw { border-color: #3a6ea5; }
+.territory-cell.owned-hufflepuff { border-color: #c9a227; }
+.territory-cell.owned-slytherin { border-color: #2f7a4f; }
+
+.territory-cell .t-icon { font-size: 1.05rem; }
+.territory-cell .t-name { font-size: 0.68rem; font-weight: 700; line-height: 1.2; }
+.territory-cell .t-bonus { font-size: 0.55rem; color: var(--muted); line-height: 1.3; }
+.territory-cell .t-owner { font-size: 0.52rem; color: var(--accent2); }
+
+.opp-territory {
+  margin: 0.45rem 0;
+  font-size: 0.78rem;
+  color: var(--gold);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .territory-map {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .territory-cell {
+    grid-row: auto !important;
+    grid-column: auto !important;
+  }
+}
 
 .status-row {
   display: flex;

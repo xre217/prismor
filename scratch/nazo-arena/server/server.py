@@ -41,6 +41,14 @@ from relics import (
     roll_relic_drop,
     system_relic_for_elo,
 )
+from territories import (
+    TERRITORIES,
+    apply_territory_bonuses,
+    apply_territory_duel_open,
+    bonuses_for_faction,
+    map_public,
+    territory_public,
+)
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -54,6 +62,7 @@ def current_season() -> dict:
     global _last_season_id
     row = ensure_season(store)
     sid = row["id"]
+    store.ensure_territories(sid, TERRITORIES)
     if _last_season_id is not None and sid != _last_season_id:
         for g in guilds.values():
             if g.get("is_faction"):
@@ -62,6 +71,12 @@ def current_season() -> dict:
                 g["losses"] = 0
     _last_season_id = sid
     return row
+
+
+def territories_payload() -> list[dict]:
+    season = current_season()
+    owners = {r["id"]: r.get("owner_faction") for r in store.all_territories()}
+    return map_public(owners)
 
 
 def leaderboard_payload() -> dict:
@@ -98,6 +113,7 @@ def leaderboard_payload() -> dict:
         "standings": standings_public(),
         "playerBoard": players,
         "history": history,
+        "territories": territories_payload(),
     }
 
 
@@ -156,6 +172,7 @@ def _faction_member_count(fid: str) -> int:
 
 def standings_public() -> list[dict]:
     rows = store.faction_standings()
+    counts = store.territory_counts()
     out = []
     for i, row in enumerate(rows):
         fac = FACTIONS.get(row["id"], {})
@@ -168,6 +185,7 @@ def standings_public() -> list[dict]:
             "wins": row["wins"],
             "losses": row["losses"],
             "members": _faction_member_count(row["id"]),
+            "territories": counts.get(row["id"], 0),
         })
     return out
 
@@ -247,6 +265,7 @@ def leave_guild(player_id: str, *, persist: bool = True) -> None:
     if gid in queue:
         queue.remove(gid)
         g["queued"] = False
+        g["contest_territory"] = None
     if g.get("is_faction"):
         g["player_ids"] = [x for x in g["player_ids"] if x != player_id]
         g["members"] = [m for m in g["members"] if m.get("playerId") != player_id]
@@ -368,34 +387,68 @@ async def matchmaking_tick() -> None:
         current_season()  # rollover check
         now = asyncio.get_event_loop().time()
 
-        # human vs human — different houses only
         available = [
             gid for gid in queue
             if gid in guilds
             and guilds[gid].get("is_faction")
             and online_member_ids(gid)
         ]
+        matched: set[str] = set()
+
+        # Contesters → match against the territory's owning house when queued
+        for gid in list(available):
+            if gid in matched:
+                continue
+            g = guilds[gid]
+            tid = g.get("contest_territory")
+            if not tid:
+                continue
+            owner = store.get_territory_owner(tid)
+            home_f = g.get("faction_id")
+            if not owner or owner == home_f:
+                continue
+            owner_gid = f"faction-{owner}"
+            if owner_gid not in available or owner_gid in matched:
+                continue
+            if gid in queue:
+                queue.remove(gid)
+            if owner_gid in queue:
+                queue.remove(owner_gid)
+            matched.add(gid)
+            matched.add(owner_gid)
+            await start_war(gid, owner_gid, system_side=None, territory_id=tid)
+
+        # Open queue (no territory) — human vs human, different houses
         by_faction: dict[str, list[str]] = {}
         for gid in available:
+            if gid in matched:
+                continue
+            if guilds[gid].get("contest_territory"):
+                continue
             fid = guilds[gid].get("faction_id")
             if fid:
                 by_faction.setdefault(fid, []).append(gid)
 
         fids = list(by_faction.keys())
-        matched = set()
         for i, f1 in enumerate(fids):
             for f2 in fids[i + 1:]:
                 if by_faction[f1] and by_faction[f2]:
                     a = by_faction[f1].pop(0)
                     b = by_faction[f2].pop(0)
+                    if a in matched or b in matched:
+                        continue
                     if a in queue:
                         queue.remove(a)
                     if b in queue:
                         queue.remove(b)
-                    await start_war(a, b, system_side=None)
+                    matched.add(a)
+                    matched.add(b)
+                    await start_war(a, b, system_side=None, territory_id=None)
 
-        # human vs disguised rival house
+        # Timed-out queue → disguised System rival (still contests territory if set)
         for gid in list(queue):
+            if gid in matched:
+                continue
             g = guilds.get(gid)
             if not g or not g.get("is_faction"):
                 continue
@@ -403,24 +456,38 @@ async def matchmaking_tick() -> None:
                 if gid in queue:
                     queue.remove(gid)
                 g["queued"] = False
+                g["contest_territory"] = None
                 continue
             waited = now - g.get("queued_at", now)
             if waited >= MATCH_WAIT_SEC:
                 queue.remove(gid)
                 home_f = g["faction_id"]
-                opp_f = random_opponent_faction(home_f)
+                tid = g.get("contest_territory")
+                owner = store.get_territory_owner(tid) if tid else None
+                if tid and owner and owner != home_f:
+                    opp_f = owner
+                else:
+                    opp_f = random_opponent_faction(home_f)
                 sys_g = spawn_system_guild(g["elo"], opp_f)
                 guilds[sys_g["id"]] = sys_g
-                await start_war(gid, sys_g["id"], system_side=sys_g["id"])
+                await start_war(gid, sys_g["id"], system_side=sys_g["id"], territory_id=tid)
 
 
-async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> None:
+async def start_war(
+    home_gid: str,
+    away_gid: str,
+    system_side: str | None,
+    territory_id: str | None = None,
+) -> None:
     home = guilds[home_gid]
     away = guilds[away_gid]
     home["queued"] = False
-    away["queued"] = True
+    away["queued"] = False
     home["in_war"] = True
     away["in_war"] = True
+    contested = territory_id or home.get("contest_territory") or away.get("contest_territory")
+    home["contest_territory"] = None
+    away["contest_territory"] = None
 
     home_fid = home.get("faction_id")
     away_fid = away.get("faction_id")
@@ -428,6 +495,11 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         return
 
     war_id = str(uuid.uuid4())
+    territory_info = None
+    if contested and contested in TERRITORIES:
+        owner = store.get_territory_owner(contested)
+        territory_info = territory_public(contested, owner)
+
     war = {
         "id": war_id,
         "home_id": home_gid,
@@ -446,6 +518,8 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "turn": "home",
         "waiting_action": False,
         "draft_deadline": asyncio.get_event_loop().time() + STEP_TIMEOUT_SEC,
+        "territory_id": contested if contested in TERRITORIES else None,
+        "territory": territory_info,
     }
     wars[war_id] = war
 
@@ -454,6 +528,7 @@ async def start_war(home_gid: str, away_gid: str, system_side: str | None) -> No
         "warId": war_id,
         "opponent": None,
         "youAre": "home",
+        "territory": territory_info,
     }
     for pid in home["player_ids"]:
         msg = {
@@ -669,6 +744,13 @@ async def start_duel(war_id: str) -> None:
 
     home_g = guilds[war["home_id"]]
     away_g = guilds[war["away_id"]]
+    home_owned = store.territories_owned_by(home_g.get("faction_id") or "")
+    away_owned = store.territories_owned_by(away_g.get("faction_id") or "")
+    home_tb = bonuses_for_faction(home_owned)
+    away_tb = bonuses_for_faction(away_owned)
+    apply_territory_bonuses(home_f, home_tb)
+    apply_territory_bonuses(away_f, away_tb)
+
     duel = DuelState(player=home_f, enemy=away_f)
     duel.player_hp = home_f["maxHp"]
     duel.enemy_hp = away_f["maxHp"]
@@ -676,10 +758,14 @@ async def start_duel(war_id: str) -> None:
     duel.away_faction = away_g.get("faction_id")
     duel.home_relic = home_relic
     duel.away_relic = away_relic
+    duel.home_territory = home_tb
+    duel.away_territory = away_tb
 
     open_log: list = []
     apply_relic_duel_open(duel, True, home_relic, open_log)
     apply_relic_duel_open(duel, False, away_relic, open_log)
+    apply_territory_duel_open(duel, True, home_tb, open_log, duel_index=idx)
+    apply_territory_duel_open(duel, False, away_tb, open_log, duel_index=idx)
 
     war["duel"] = duel
     war["turn"] = "home"
@@ -699,6 +785,7 @@ async def start_duel(war_id: str) -> None:
         "theirMastery": None,
         "yourRelic": None,
         "theirRelic": None,
+        "territory": war.get("territory"),
         "state": duel.snapshot(),
         "log": open_log,
     }
@@ -958,6 +1045,13 @@ async def finish_war(war_id: str) -> None:
         away_fid = away.get("faction_id") or away_fid
     store.log_war(home_fid, away_fid, war["home_score"], war["away_score"], winner_faction, season_id=sid)
 
+    seized = None
+    tid = war.get("territory_id")
+    if tid and winner_faction:
+        store.set_territory_owner(tid, winner_faction, sid)
+        seized = territory_public(tid, winner_faction)
+        war["territory"] = seized
+
     for side, won, picker_pid, picks in (
         ("home", home_won, war.get("home_picker_pid"), war.get("home_picks")),
         ("away", away_won, war.get("away_picker_pid"), war.get("away_picks")),
@@ -1007,6 +1101,8 @@ async def finish_war(war_id: str) -> None:
                 "season": board["season"],
                 "playerBoard": board["playerBoard"],
                 "history": board["history"],
+                "territories": board["territories"],
+                "territory": seized or war.get("territory"),
                 "relicDrop": drop_info,
             })
 
@@ -1061,6 +1157,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
                 "season": board["season"],
                 "playerBoard": board["playerBoard"],
                 "history": board["history"],
+                "territories": board["territories"],
                 "restored": True,
             }))
             return
@@ -1091,6 +1188,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "season": board["season"],
             "playerBoard": board["playerBoard"],
             "history": board["history"],
+            "territories": board["territories"],
             "restored": False,
         }))
         return
@@ -1115,6 +1213,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "season": board["season"],
             "playerBoard": board["playerBoard"],
             "history": board["history"],
+            "territories": board["territories"],
         }))
         return
 
@@ -1146,6 +1245,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if gid and gid in queue:
             queue.remove(gid)
             guilds[gid]["queued"] = False
+            guilds[gid]["contest_territory"] = None
         leave_guild(pid, persist=True)
         board = leaderboard_payload()
         await ws.send(_json({
@@ -1156,6 +1256,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
             "season": board["season"],
             "playerBoard": board["playerBoard"],
             "history": board["history"],
+            "territories": board["territories"],
         }))
         return
 
@@ -1190,11 +1291,32 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if not online_member_ids(gid) and pid not in g.get("player_ids", []):
             await ws.send(_json({"type": "error", "message": "Rejoin your house first"}))
             return
+
+        territory_id = msg.get("territoryId") or None
+        if territory_id:
+            if territory_id not in TERRITORIES:
+                await ws.send(_json({"type": "error", "message": "Unknown territory"}))
+                return
+            owner = store.get_territory_owner(territory_id)
+            if owner and owner == g.get("faction_id"):
+                await ws.send(_json({"type": "error", "message": "Your house already holds that region"}))
+                return
+
         g["queued"] = True
         g["queued_at"] = asyncio.get_event_loop().time()
+        g["contest_territory"] = territory_id
         if gid not in queue:
             queue.append(gid)
-        await broadcast_guild(gid, {"type": "war.queued", "message": "Searching for a rival guild..."})
+        if territory_id:
+            t = TERRITORIES[territory_id]
+            line = f"Contesting {t['icon']} {t['name']}..."
+        else:
+            line = "Searching for a rival guild..."
+        await broadcast_guild(gid, {
+            "type": "war.queued",
+            "message": line,
+            "territoryId": territory_id,
+        })
         return
 
     if mtype == "war.unqueue":
@@ -1202,6 +1324,7 @@ async def handle_message(ws: WebSocketServerProtocol, raw: str) -> None:
         if gid and gid in queue:
             queue.remove(gid)
             guilds[gid]["queued"] = False
+            guilds[gid]["contest_territory"] = None
         await ws.send(_json({"type": "war.unqueued"}))
         return
 

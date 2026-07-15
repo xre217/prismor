@@ -29,7 +29,9 @@
     season: null,
     playerBoard: [],
     history: [],
+    territories: [],
     boardTab: "houses",
+    contestTerritoryId: null,
   };
 
   function send(type, payload = {}) {
@@ -69,6 +71,7 @@
     if (msg.season) mp.season = msg.season;
     if (msg.playerBoard) mp.playerBoard = msg.playerBoard;
     if (msg.history) mp.history = msg.history;
+    if (msg.territories) mp.territories = msg.territories;
   }
 
   function handleMessage(msg) {
@@ -120,8 +123,9 @@
         mp.youAre = msg.youAre;
         mp.opponent = msg.opponent;
         mp.draft = msg.draft || null;
+        mp.contestTerritoryId = null;
         setStatus("War matched");
-        showOpponentIntro(msg.opponent);
+        showOpponentIntro(msg.opponent, msg.territory);
         break;
       case "war.draft.update":
         mp.draft = msg.draft;
@@ -156,11 +160,21 @@
     }
   }
 
-  function showOpponentIntro(opp) {
+  function showOpponentIntro(opp, territory) {
     $("opp-crest").textContent = opp.crest;
     $("opp-name").textContent = opp.house ? `${opp.house} · ${opp.lab || ""}` : opp.name;
     $("opp-tag").textContent = `[${opp.tag}]`;
     $("opp-elo").textContent = `ELO ${opp.elo} · ${opp.wins}W ${opp.losses}L`;
+    const terrEl = $("opp-territory");
+    if (terrEl) {
+      if (territory) {
+        terrEl.classList.remove("hidden");
+        terrEl.textContent = `Contesting ${territory.icon} ${territory.name} — ${territory.bonusDesc}`;
+      } else {
+        terrEl.classList.add("hidden");
+        terrEl.textContent = "";
+      }
+    }
     const members = opp.members.slice(0, 6).map((m) =>
       `<span class="member-chip">${m.name} <em>${m.lastSeen}</em></span>`
     ).join("");
@@ -238,7 +252,7 @@
             <span class="house">${s.house}</span>
             <span class="elo">${s.elo} ELO</span>
             <span class="record">${s.wins}W ${s.losses}L</span>
-            <span class="members">${s.members} enlisted</span>
+            <span class="members">${s.members} enlisted · ${s.territories || 0} lands</span>
           </div>
         `).join("")}</div>`;
       }
@@ -369,10 +383,63 @@
     });
   }
 
+  function houseLabel(factionId) {
+    if (!factionId) return "Neutral";
+    const fac = FACTIONS[factionId] || (mp.factions || []).find((f) => f.id === factionId);
+    return fac ? `${fac.crest || ""} ${fac.house || factionId}` : factionId;
+  }
+
+  function renderTerritoryMap() {
+    const el = $("territory-panel");
+    if (!el) return;
+    const list = mp.territories || [];
+    const myFid = mp.guild?.factionId;
+    if (!list.length) {
+      el.innerHTML = `<h3>Territory Map</h3><p class="muted">Map loads after connect.</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <h3>Territory Map</h3>
+      <p class="muted">Click a rival or neutral region to contest it. Owned lands grant mild war bonuses (max 3 stacked).</p>
+      <div class="territory-map">
+        ${list.map((t) => {
+          const owned = t.ownerFaction === myFid;
+          const ownerCls = t.ownerFaction ? `owned-${t.ownerFaction}` : "neutral";
+          const selected = mp.contestTerritoryId === t.id ? "selected" : "";
+          const disabled = owned ? "disabled" : "";
+          return `
+            <button type="button" class="territory-cell ${ownerCls} ${selected} ${owned ? "yours" : ""}"
+              style="grid-row:${t.row};grid-column:${t.col}"
+              data-id="${t.id}" ${disabled}
+              title="${t.flavor}">
+              <span class="t-icon">${t.icon}</span>
+              <span class="t-name">${t.name}</span>
+              <span class="t-bonus">${t.bonusDesc}</span>
+              <span class="t-owner">${owned ? "Your house" : houseLabel(t.ownerFaction)}</span>
+            </button>`;
+        }).join("")}
+      </div>
+    `;
+    el.querySelectorAll(".territory-cell:not(.yours)").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        mp.contestTerritoryId = mp.contestTerritoryId === id ? null : id;
+        renderTerritoryMap();
+        if (mp.contestTerritoryId) {
+          const t = list.find((x) => x.id === id);
+          setStatus(`Ready to contest ${t?.icon || ""} ${t?.name || id}`);
+        } else {
+          setStatus("Open war queue (no territory)");
+        }
+      });
+    });
+  }
+
   function renderGuildHall() {
     renderStandings();
     renderPlayerStats();
     renderRelicPanel();
+    renderTerritoryMap();
     const g = mp.guild;
     if (!g) {
       $("guild-panel").innerHTML = `<p class="muted">Choose a house to enlist.</p>`;
@@ -382,6 +449,12 @@
     const lab = g.lab || "";
     const house = g.house || g.name;
     const fac = FACTIONS[g.factionId] || {};
+    const contestHint = mp.contestTerritoryId
+      ? (() => {
+          const t = (mp.territories || []).find((x) => x.id === mp.contestTerritoryId);
+          return t ? `Contest ${t.icon} ${t.name}` : "Contest selected region";
+        })()
+      : "Queue House War";
     $("guild-panel").innerHTML = `
       <div class="guild-banner house-banner">
         <span class="guild-crest">${g.crest}</span>
@@ -396,7 +469,9 @@
         `<div class="member-row"><span>${m.name}</span><span class="role">${m.role}</span><span class="seen">${m.lastSeen}</span></div>`
       ).join("")}</div>
     `;
-    $("btn-war-queue").disabled = false;
+    const qBtn = $("btn-war-queue");
+    qBtn.disabled = false;
+    qBtn.textContent = contestHint;
   }
 
   async function login() {
@@ -413,7 +488,9 @@
   }
 
   function queueWar() {
-    send("war.queue");
+    const payload = {};
+    if (mp.contestTerritoryId) payload.territoryId = mp.contestTerritoryId;
+    send("war.queue", payload);
   }
 
   function cancelQueue() {
@@ -690,6 +767,13 @@
     if (msg.relicDrop) {
       body += ` Relic unlocked: ${msg.relicDrop.icon} ${msg.relicDrop.name}.`;
     }
+    if (msg.territory) {
+      const t = msg.territory;
+      body += msg.won
+        ? ` Your house now holds ${t.icon} ${t.name}.`
+        : ` ${t.icon} ${t.name} slipped away.`;
+    }
+    mp.contestTerritoryId = null;
     $("result-body").textContent = body;
     $("btn-replay").classList.add("hidden");
     $("btn-result-guild").classList.remove("hidden");
