@@ -92,6 +92,17 @@ header h1 {
   line-height: 1.6;
 }
 
+.title-hint {
+  text-align: center;
+  font-size: 0.65rem;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.title-hint code {
+  color: var(--gold);
+  font-size: 0.6rem;
+}
+
 .btn {
   font-family: inherit;
   font-size: 0.85rem;
