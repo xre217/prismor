@@ -125,21 +125,44 @@ class ArenaStore:
         )
         self.conn.commit()
 
-    def add_mastery(self, pid: str, fighter_id: str, xp: int, won: bool) -> None:
-        col = "wins" if won else "losses"
-        self.conn.execute(
-            f"""
-            INSERT INTO fighter_mastery (player_id, fighter_id, xp, wins, losses)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(player_id, fighter_id) DO UPDATE SET
-                xp = xp + excluded.xp,
-                {col} = {col} + 1
-            """,
-            (pid, fighter_id, xp, 1 if won else 0, 0 if won else 1),
-        )
+    def add_mastery(self, pid: str, fighter_id: str, xp: int, won: bool, *, record: bool = True) -> None:
+        if record:
+            col = "wins" if won else "losses"
+            self.conn.execute(
+                f"""
+                INSERT INTO fighter_mastery (player_id, fighter_id, xp, wins, losses)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(player_id, fighter_id) DO UPDATE SET
+                    xp = xp + excluded.xp,
+                    {col} = {col} + 1
+                """,
+                (pid, fighter_id, xp, 1 if won else 0, 0 if won else 1),
+            )
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO fighter_mastery (player_id, fighter_id, xp, wins, losses)
+                VALUES (?, ?, ?, 0, 0)
+                ON CONFLICT(player_id, fighter_id) DO UPDATE SET
+                    xp = xp + excluded.xp
+                """,
+                (pid, fighter_id, xp),
+            )
         self.conn.commit()
 
+    def get_mastery(self, pid: str, fighter_id: str) -> dict | None:
+        row = self.conn.execute(
+            """
+            SELECT fighter_id, xp, wins, losses
+            FROM fighter_mastery WHERE player_id = ? AND fighter_id = ?
+            """,
+            (pid, fighter_id),
+        ).fetchone()
+        return dict(row) if row else None
+
     def player_mastery(self, pid: str, limit: int = 8) -> list[dict]:
+        from mastery import mastery_public
+
         rows = self.conn.execute(
             """
             SELECT fighter_id, xp, wins, losses
@@ -148,7 +171,12 @@ class ArenaStore:
             """,
             (pid, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            info = mastery_public(r["xp"], r["wins"], r["losses"])
+            info["fighter_id"] = r["fighter_id"]
+            out.append(info)
+        return out
 
     def player_public(self, pid: str) -> dict | None:
         p = self.get_player_by_id(pid)

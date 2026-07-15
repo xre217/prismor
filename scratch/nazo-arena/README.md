@@ -56,6 +56,20 @@ python3 -m http.server 8080         # terminal 2
 
 When no rival house is online, the server spawns an opponent that **looks exactly like a real house guild** — same name, crest, member list, captain locking in rosters with delays. Players never see `is_system`.
 
+## Fighter mastery
+
+XP on each fighter unlocks combat bonuses in guild wars:
+
+| Tier | XP | Bonus |
+|------|-----|-------|
+| Rookie | 0 | — |
+| Adept | 12 | +1 Power, +3 HP |
+| Veteran | 36 | +1 Power, +1 Mind, +5 HP |
+| Master | 72 | +2 Power, +1 Speed, +1 Mind, +8 HP |
+| Legend | 120 | +2 Power, +1 Speed/Mind/Luck/Shield, +12 HP |
+
+Earn XP by drafting and winning duels (+8 per duel win, +3 loss) plus a small war roster bonus. System rivals scale fake mastery with ELO.
+
 ## Persistence
 
 Guild war results, house ELO, player records, and fighter mastery are stored in SQLite at `data/nazo-arena.db` (override with `NAZO_ARENA_DB`).

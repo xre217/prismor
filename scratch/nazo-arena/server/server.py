@@ -32,6 +32,7 @@ from system_guilds import (
     spawn_system_guild,
 )
 from store import ArenaStore
+from mastery import apply_mastery, mastery_public, system_mastery_xp
 
 PORT = 8765
 MATCH_WAIT_SEC = 4.0
@@ -535,6 +536,27 @@ async def maybe_start_duels(war_id: str) -> None:
         await start_duel(war_id)
 
 
+def mastery_xp_for_side(war: dict, side: str, fighter_id: str) -> int:
+    """XP for the picker (or best online member) for this fighter; System gets ELO-scaled fake XP."""
+    gid = war[f"{side}_id"]
+    g = guilds.get(gid, {})
+    if g.get("is_system"):
+        return system_mastery_xp(g.get("elo", 1000))
+
+    picker = war.get(f"{side}_picker_pid")
+    if picker:
+        row = store.get_mastery(picker, fighter_id)
+        if row:
+            return int(row["xp"])
+
+    best = 0
+    for pid in g.get("player_ids", []):
+        row = store.get_mastery(pid, fighter_id)
+        if row:
+            best = max(best, int(row["xp"]))
+    return best
+
+
 async def start_duel(war_id: str) -> None:
     war = wars[war_id]
     idx = war["duel_index"]
@@ -542,15 +564,28 @@ async def start_duel(war_id: str) -> None:
         await finish_war(war_id)
         return
 
-    home_f = pick_ids_from_roster(war["home_picks"])[idx]
-    away_f = pick_ids_from_roster(war["away_picks"])[idx]
+    home_id = war["home_picks"][idx]
+    away_id = war["away_picks"][idx]
+    home_f = pick_ids_from_roster([home_id])[0]
+    away_f = pick_ids_from_roster([away_id])[0]
+
+    home_xp = mastery_xp_for_side(war, "home", home_id)
+    away_xp = mastery_xp_for_side(war, "away", away_id)
+    home_m = apply_mastery(home_f, home_xp)
+    away_m = apply_mastery(away_f, away_xp)
+
     home_g = guilds[war["home_id"]]
     away_g = guilds[war["away_id"]]
-    war["duel"] = DuelState(player=home_f, enemy=away_f)
-    war["duel"].home_faction = home_g.get("faction_id")
-    war["duel"].away_faction = away_g.get("faction_id")
+    duel = DuelState(player=home_f, enemy=away_f)
+    duel.player_hp = home_f["maxHp"]
+    duel.enemy_hp = away_f["maxHp"]
+    duel.home_faction = home_g.get("faction_id")
+    duel.away_faction = away_g.get("faction_id")
+    war["duel"] = duel
     war["turn"] = "home"
     war["waiting_action"] = False
+    war["home_duel_fighter"] = home_id
+    war["away_duel_fighter"] = away_id
 
     msg = {
         "type": "war.duel.start",
@@ -560,7 +595,9 @@ async def start_duel(war_id: str) -> None:
         "awayScore": war["away_score"],
         "yourFighter": None,
         "theirFighter": None,
-        "state": war["duel"].snapshot(),
+        "yourMastery": None,
+        "theirMastery": None,
+        "state": duel.snapshot(),
         "log": [],
     }
 
@@ -572,17 +609,19 @@ async def start_duel(war_id: str) -> None:
         if you_are == "home":
             m["yourFighter"] = home_f
             m["theirFighter"] = away_f
+            m["yourMastery"] = home_m
+            m["theirMastery"] = away_m
         else:
             m["yourFighter"] = away_f
             m["theirFighter"] = home_f
-            # flip perspective for away player's UI
-            d = war["duel"]
+            m["yourMastery"] = away_m
+            m["theirMastery"] = home_m
             m["state"] = {
-                "playerHp": d.enemy_hp,
-                "enemyHp": d.player_hp,
-                "playerMax": d.enemy["maxHp"],
-                "enemyMax": d.player["maxHp"],
-                "guarding": {"player": d.guarding_enemy, "enemy": d.guarding_player},
+                "playerHp": duel.enemy_hp,
+                "enemyHp": duel.player_hp,
+                "playerMax": duel.enemy["maxHp"],
+                "enemyMax": duel.player["maxHp"],
+                "guarding": {"player": duel.guarding_enemy, "enemy": duel.guarding_player},
             }
         for pid in g["player_ids"]:
             await send_player(pid, m)
@@ -654,6 +693,15 @@ async def handle_war_action(war_id: str, guild_id: str, action: str, from_system
                 continue
             for pid in g.get("player_ids", []):
                 store.record_player_duel(pid, won)
+            # Award mastery XP to the fighter that just fought
+            fighter_id = war.get(f"{side}_duel_fighter")
+            picker = war.get(f"{side}_picker_pid")
+            if fighter_id and picker:
+                store.add_mastery(picker, fighter_id, xp=8 if won else 3, won=won)
+            elif fighter_id:
+                members = online_member_ids(gid)
+                if members:
+                    store.add_mastery(members[0], fighter_id, xp=8 if won else 3, won=won)
 
         await broadcast_duel_end(war_id, home_duel_won)
         await asyncio.sleep(1.2)
@@ -790,8 +838,9 @@ async def finish_war(war_id: str) -> None:
         for pid in g.get("player_ids", []):
             store.record_player_war(pid, won)
         if picker_pid and picks:
+            # Small war bonus on top of per-duel XP (roster familiarity, no extra W/L)
             for fighter_id in picks:
-                store.add_mastery(picker_pid, fighter_id, xp=12 if won else 4, won=won)
+                store.add_mastery(picker_pid, fighter_id, xp=4 if won else 1, won=won, record=False)
 
     standings = standings_public()
 

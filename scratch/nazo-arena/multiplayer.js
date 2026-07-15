@@ -201,9 +201,33 @@
     `;
   }
 
-  function masteryXp(fighterId) {
+  function masteryInfo(fighterId) {
     const m = (mp.stats?.mastery || []).find((x) => x.fighter_id === fighterId);
-    return m ? m.xp : 0;
+    if (!m) return { xp: 0, tier: 0, tierName: "Rookie", bonusDesc: "No bonus", wins: 0, losses: 0 };
+    return {
+      xp: m.xp || 0,
+      tier: m.tier ?? tierFromXp(m.xp || 0),
+      tierName: m.tierName || tierNameFromXp(m.xp || 0),
+      bonusDesc: m.bonusDesc || "",
+      wins: m.wins || 0,
+      losses: m.losses || 0,
+    };
+  }
+
+  function tierFromXp(xp) {
+    if (xp >= 120) return 4;
+    if (xp >= 72) return 3;
+    if (xp >= 36) return 2;
+    if (xp >= 12) return 1;
+    return 0;
+  }
+
+  function tierNameFromXp(xp) {
+    return ["Rookie", "Adept", "Veteran", "Master", "Legend"][tierFromXp(xp)];
+  }
+
+  function masteryXp(fighterId) {
+    return masteryInfo(fighterId).xp;
   }
 
   function renderPlayerStats() {
@@ -217,7 +241,8 @@
     const mastery = (s.mastery || []).slice(0, 4).map((m) => {
       const f = (window.NazoData.ALL_FIGHTERS || []).find((x) => x.id === m.fighter_id);
       const name = f ? f.name : m.fighter_id;
-      return `<span class="mastery-chip">${name} · ${m.xp} XP · ${m.wins}W/${m.losses}L</span>`;
+      const tier = m.tierName || tierNameFromXp(m.xp || 0);
+      return `<span class="mastery-chip tier-${m.tier ?? tierFromXp(m.xp || 0)}">${name} · ${tier} · ${m.xp} XP · ${m.wins}W/${m.losses}L</span>`;
     }).join("");
     el.innerHTML = `
       <div class="player-stats">
@@ -226,6 +251,7 @@
         ${mastery
           ? `<div class="mastery-row">${mastery}</div>`
           : `<div class="stat-line muted">No fighter mastery yet — draft a war roster.</div>`}
+        <div class="stat-line muted">Mastery boosts stats in guild war duels (Adept → Legend).</div>
       </div>
     `;
   }
@@ -347,6 +373,7 @@
       card.type = "button";
       card.className = "draft-card";
       const xp = masteryXp(f.id);
+      const info = masteryInfo(f.id);
       let state = "";
       if (opts.banned.has(f.id)) {
         card.classList.add("banned");
@@ -359,13 +386,15 @@
       const canClick = opts.canAct && opts.selectable.has(f.id);
       if (canClick) card.classList.add("selectable");
       card.disabled = !canClick;
+      if (info.tier > 0) card.classList.add(`tier-${info.tier}`);
 
       card.innerHTML = `
         <span class="draft-icon">${f.icon}</span>
         <span class="draft-name">${f.name}</span>
         <span class="draft-type">${f.type} · ${f.skill}</span>
         <span class="draft-stats">PWR ${f.stats.power} · SPD ${f.stats.speed} · MND ${f.stats.mind}</span>
-        ${xp ? `<span class="draft-xp">${xp} XP</span>` : ""}
+        ${info.tier > 0 ? `<span class="draft-xp">${info.tierName} · ${xp} XP</span>` : ""}
+        ${info.tier > 0 ? `<span class="draft-bonus">${info.bonusDesc || ""}</span>` : ""}
         ${state ? `<span class="draft-state">${state}</span>` : ""}
       `;
 
@@ -428,10 +457,28 @@
     $("enemy-name").textContent = mp.theirFighter.name;
     updateWarUI(msg.state);
     log(`— Duel ${msg.duelIndex}: ${mp.yourFighter.name} vs ${mp.theirFighter.name} —`);
+    if (msg.yourMastery && msg.yourMastery.tier > 0) {
+      log(`Your mastery — ${msg.yourMastery.tierName}: ${msg.yourMastery.bonusDesc}`, "crit");
+    }
+    if (msg.theirMastery && msg.theirMastery.tier > 0) {
+      log(`Their mastery — ${msg.theirMastery.tierName}: ${msg.theirMastery.bonusDesc}`, "system");
+    }
     showBattlePassive(mp.guild?.factionId);
+    showMasteryBanner(msg.yourMastery);
     showIntel(null);
     setWarActions(!!msg.yourTurn);
     showScreen("screen-battle");
+  }
+
+  function showMasteryBanner(mastery) {
+    const el = $("battle-mastery");
+    if (!el) return;
+    if (mastery && mastery.tier > 0) {
+      el.textContent = `Mastery — ${mastery.tierName}: ${mastery.bonusDesc}`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
   }
 
   function updateWarUI(st) {

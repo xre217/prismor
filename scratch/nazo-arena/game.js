@@ -374,6 +374,8 @@ function endGame(won) {
   $("btn-replay").classList.remove("hidden");
   $("btn-result-guild").classList.add("hidden");
   $("battle-passive").classList.add("hidden");
+  const bm = $("battle-mastery");
+  if (bm) bm.classList.add("hidden");
   $("battle-intel").classList.add("hidden");
   showScreen("screen-result");
 }
